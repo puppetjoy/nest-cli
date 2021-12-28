@@ -53,7 +53,7 @@ module Nest
       raise 'Failed to create snapshots for cloning' unless cmd.run!("sudo zfs snapshot -r #{@current_fs}@#{snapshot}").success?
 
       `zfs list -H -o name,mountpoint -r #{@current_fs}`.lines.each do |line|
-        (fs, mountpoint) = line.chomp.split("\t")
+        (fs, mountpoint) = line.chomp.split("\t", 2)
         clone_fs = "#{@be_root}/#{name}#{fs.sub(/^#{Regexp.escape(@current_fs)}/, '')}"
         if cmd.run!("sudo zfs clone -o canmount=noauto -o mountpoint=#{mountpoint.shellescape} #{fs}@#{snapshot} #{clone_fs}").failure?
           cmd.run "sudo zfs destroy -R #{@current_fs}@#{snapshot}"
@@ -97,7 +97,7 @@ module Nest
       mount_be = "#{@be_root}/#{name}"
 
       filesystems = `zfs list -H -o name,mountpoint -r #{mount_be.shellescape} 2>/dev/null`.lines.each_with_object({}) do |line, fss|
-        (fs, mountpoint) = line.chomp.split("\t")
+        (fs, mountpoint) = line.chomp.split("\t", 2)
         mountpoint = '' if mountpoint == '/'
         fss[fs] = "/mnt/#{name}#{mountpoint}"
         fss
@@ -109,7 +109,7 @@ module Nest
       end
 
       mounted = `zfs mount`.lines.each_with_object({}) do |line, m|
-        (fs, mountpoint) = line.chomp.split
+        (fs, mountpoint) = line.chomp.split(' ', 2)
         m[fs] = mountpoint
         m
       end
@@ -144,7 +144,7 @@ module Nest
       unmount_be = "#{@be_root}/#{name}"
 
       filesystems = `zfs list -H -o name,mountpoint -r #{unmount_be.shellescape} 2>/dev/null`.lines.each_with_object({}) do |line, fss|
-        (fs, mountpoint) = line.chomp.split("\t")
+        (fs, mountpoint) = line.chomp.split("\t", 2)
         mountpoint = '' if mountpoint == '/'
         fss[fs] = "/mnt/#{name}#{mountpoint}"
         fss
@@ -156,7 +156,7 @@ module Nest
       end
 
       mounted = `zfs mount`.lines.each_with_object({}) do |line, m|
-        (fs, mountpoint) = line.chomp.split
+        (fs, mountpoint) = line.chomp.split(' ', 2)
         m[fs] = mountpoint
         m
       end
