@@ -3,4 +3,4 @@
 
 require 'nest/cli'
 
-Nest::CLI.start(ARGV)
+Nest::CLI::Main.start(ARGV)
