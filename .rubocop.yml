@@ -3,8 +3,5 @@ AllCops:
   SuggestExtensions: false
   TargetRubyVersion: 2.6
 
-Layout/LineLength:
-  Enabled: false
-
 Metrics:
   Enabled: false

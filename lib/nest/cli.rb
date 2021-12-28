@@ -86,7 +86,8 @@ module Nest
 
     # Entrypoint to the Nest CLI
     class Main < Thor
-      class_option :dry_run, type: :boolean, default: false, desc: 'Do not execute commands that would modify the system'
+      class_option :dry_run, type: :boolean, default: false,
+                             desc: 'Do not execute commands that would modify the system'
 
       desc 'beadm SUBCOMMAND', 'Manage ZFS boot environments'
       subcommand 'beadm', Beadm

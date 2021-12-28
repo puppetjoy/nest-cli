@@ -31,7 +31,9 @@ module Nest
     end
 
     def active
-      raise 'zpool bootfs does not look like a boot environment' unless `zpool get -H -o value bootfs #{@zpool}` =~ %r{^#{Regexp.escape(@be_root)}/([^/]+)$}
+      bootfs = `zpool get -H -o value bootfs #{@zpool}`
+      raise 'zpool bootfs does not look like a boot environment' \
+        unless bootfs =~ %r{^#{Regexp.escape(@be_root)}/([^/]+)$}
 
       Regexp.last_match(1)
     end
@@ -50,12 +52,14 @@ module Nest
       logger.info "Creating boot environment '#{name}' from '#{@current_be}'"
 
       snapshot = "beadm-clone-#{@current_be}-to-#{name}"
-      raise 'Failed to create snapshots for cloning' unless cmd.run!("sudo zfs snapshot -r #{@current_fs}@#{snapshot}").success?
+      raise 'Failed to create snapshots for cloning' \
+        unless cmd.run!("sudo zfs snapshot -r #{@current_fs}@#{snapshot}").success?
 
       `zfs list -H -o name,mountpoint -r #{@current_fs}`.lines.each do |line|
-        (fs, mountpoint) = line.chomp.split("\t", 2)
+        (fs, mp) = line.chomp.split("\t", 2)
         clone_fs = "#{@be_root}/#{name}#{fs.sub(/^#{Regexp.escape(@current_fs)}/, '')}"
-        if cmd.run!("sudo zfs clone -o canmount=noauto -o mountpoint=#{mountpoint.shellescape} #{fs}@#{snapshot} #{clone_fs}").failure?
+        clone_cmd = "sudo zfs clone -o canmount=noauto -o mountpoint=#{mp.shellescape} #{fs}@#{snapshot} #{clone_fs}"
+        if cmd.run!(clone_cmd).failure?
           cmd.run! "sudo zfs destroy -R #{@current_fs}@#{snapshot}"
           raise 'Failed to clone snapshot. Manual cleanup may be requried.'
         end
@@ -80,14 +84,17 @@ module Nest
 
       logger.info "Destroying boot environment '#{name}'"
 
-      raise 'Failed to destroy the boot environment' unless cmd.run!("sudo zfs destroy -r #{destroy_be}").success?
+      raise 'Failed to destroy the boot environment' \
+        unless cmd.run!("sudo zfs destroy -r #{destroy_be}").success?
 
       `zfs list -H -o name -t snapshot -r #{@be_root}`.lines.map(&:chomp).each do |snapshot|
         next unless snapshot =~ /@beadm-clone-(#{Regexp.escape(name)}-to-.*|.*-to-#{Regexp.escape(name)})$/
-        raise 'Failed to destroy snapshot. Manual cleanup may be required.' unless cmd.run!("sudo zfs destroy #{snapshot}").success?
+        raise 'Failed to destroy snapshot. Manual cleanup may be required.' \
+          unless cmd.run!("sudo zfs destroy #{snapshot}").success?
       end
 
-      logger.warn "/mnt/#{name} exists and couldn't be removed" if Dir.exist?("/mnt/#{name}") && cmd.run!("sudo rmdir /mnt/#{name}").failure?
+      logger.warn "/mnt/#{name} exists and couldn't be removed" \
+        if Dir.exist?("/mnt/#{name}") && cmd.run!("sudo rmdir /mnt/#{name}").failure?
 
       logger.success "Destroyed boot environment '#{name}'"
       true
@@ -96,7 +103,8 @@ module Nest
     def mount(name)
       mount_be = "#{@be_root}/#{name}"
 
-      filesystems = `zfs list -H -o name,mountpoint -r #{mount_be.shellescape} 2>/dev/null`.lines.each_with_object({}) do |line, fss|
+      zfs_list = `zfs list -H -o name,mountpoint -r #{mount_be.shellescape} 2>/dev/null`.lines
+      filesystems = zfs_list.each_with_object({}) do |line, fss|
         (fs, mountpoint) = line.chomp.split("\t", 2)
         mountpoint = '' if mountpoint == '/'
         fss[fs] = "/mnt/#{name}#{mountpoint}"
@@ -126,7 +134,8 @@ module Nest
 
       logger.info "Mounting boot environment '#{name}' at /mnt/#{name}"
 
-      raise "Failed to make /mnt/#{name}" unless Dir.exist?("/mnt/#{name}") || cmd.run!("sudo mkdir /mnt/#{name}").success?
+      raise "Failed to make /mnt/#{name}" \
+        unless Dir.exist?("/mnt/#{name}") || cmd.run!("sudo mkdir /mnt/#{name}").success?
 
       filesystems.each do |fs, mountpoint|
         next if cmd.run!("sudo mount -t zfs -o zfsutil #{fs} #{mountpoint}").success?
@@ -143,7 +152,8 @@ module Nest
     def unmount(name)
       unmount_be = "#{@be_root}/#{name}"
 
-      filesystems = `zfs list -H -o name,mountpoint -r #{unmount_be.shellescape} 2>/dev/null`.lines.each_with_object({}) do |line, fss|
+      zfs_list = `zfs list -H -o name,mountpoint -r #{unmount_be.shellescape} 2>/dev/null`.lines
+      filesystems = zfs_list.each_with_object({}) do |line, fss|
         (fs, mountpoint) = line.chomp.split("\t", 2)
         mountpoint = '' if mountpoint == '/'
         fss[fs] = "/mnt/#{name}#{mountpoint}"
