@@ -11,12 +11,12 @@ module Nest
 
     def cmd
       require 'tty-command'
-      $COMMAND ||= TTY::Command.new(dry_run: $DRY_RUN, uuid: false) # rubocop:disable Style/GlobalVars
+      $command ||= TTY::Command.new(dry_run: $DRY_RUN, uuid: false) # rubocop:disable Style/GlobalVars
     end
 
     def logger
       require 'tty-logger'
-      $LOGGER ||= TTY::Logger.new # rubocop:disable Style/GlobalVars
+      $logger ||= TTY::Logger.new # rubocop:disable Style/GlobalVars
     end
 
     # Subcommand to manage ZFS boot environments
