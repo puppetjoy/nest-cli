@@ -56,7 +56,7 @@ module Nest
         (fs, mountpoint) = line.chomp.split("\t", 2)
         clone_fs = "#{@be_root}/#{name}#{fs.sub(/^#{Regexp.escape(@current_fs)}/, '')}"
         if cmd.run!("sudo zfs clone -o canmount=noauto -o mountpoint=#{mountpoint.shellescape} #{fs}@#{snapshot} #{clone_fs}").failure?
-          cmd.run "sudo zfs destroy -R #{@current_fs}@#{snapshot}"
+          cmd.run! "sudo zfs destroy -R #{@current_fs}@#{snapshot}"
           raise 'Failed to clone snapshot. Manual cleanup may be requried.'
         end
       end
@@ -131,8 +131,8 @@ module Nest
       filesystems.each do |fs, mountpoint|
         next if cmd.run!("sudo mount -t zfs -o zfsutil #{fs} #{mountpoint}").success?
 
-        cmd.run("sudo umount -R /mnt/#{name}")
-        cmd.run("sudo rmdir /mnt/#{name}")
+        cmd.run! "sudo umount -R /mnt/#{name}"
+        cmd.run! "sudo rmdir /mnt/#{name}"
         raise 'Failed to mount the boot environment. Manual cleanup may be required.'
       end
 
