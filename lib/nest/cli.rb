@@ -9,14 +9,21 @@ module Nest
     USER_ERROR = 2
     SYSTEM_ERROR = 3
 
+    ADMIN = Process.uid.zero? ? '' : 'sudo '
+
+    def cli_init
+      $DRY_RUN = options[:dry_run]
+      $LOG_DEBUG = options[:debug]
+    end
+
     def cmd
       require 'tty-command'
-      $command ||= TTY::Command.new(dry_run: $DRY_RUN, uuid: false) # rubocop:disable Style/GlobalVars
+      $command ||= TTY::Command.new(dry_run: $DRY_RUN, uuid: false)
     end
 
     def logger
       require 'tty-logger'
-      $logger ||= TTY::Logger.new # rubocop:disable Style/GlobalVars
+      $logger ||= TTY::Logger.new { |config| config.level = $LOG_DEBUG ? :debug : :info }
     end
 
     # Subcommand to manage ZFS boot environments
@@ -25,8 +32,8 @@ module Nest
 
       no_commands do
         def beadm
+          cli_init
           require_relative 'beadm'
-          $DRY_RUN = options[:dry_run] # rubocop:disable Style/GlobalVars
           @beadm ||= Nest::Beadm.new
         end
       end
@@ -94,6 +101,20 @@ module Nest
 
     # Entrypoint to the Nest CLI
     class Main < Thor
+      include Nest::CLI
+
+      no_commands do
+        def installer
+          cli_init
+          require_relative 'installer'
+          @installer ||= Nest::Installer.for_host(@name)
+        rescue RuntimeError => e
+          logger.error(e.message)
+          exit USER_ERROR
+        end
+      end
+
+      class_option :debug, type: :boolean, default: false, desc: 'Log debug messages'
       class_option :dry_run, type: :boolean, default: false,
                              desc: 'Only print actions that would modify the system'
 
@@ -101,8 +122,28 @@ module Nest
       subcommand 'beadm', Beadm
 
       desc 'install [options] NAME', 'Install a new host'
+      option :disk, aliases: '-d', desc: 'The disk to format and install on'
+      option :start, aliases: '-s', banner: 'STEP', default: 'partition', desc: 'Start installation from this point'
+      long_desc <<-LONGDESC
+        Install a new host called NAME onto DISK starting at STEP where:
+
+        \x5 NAME is a host with a valid Stage 3 image under /nest/hosts
+        \x5 DISK is a device name, like /dev/sda
+        \x5 STEP is one of the following points where the installer should start
+
+        \x5* partition (default)
+        \x5* format
+        \x5* mount
+        \x5* copy
+        \x5* bootloader
+        \x5* firmware
+      LONGDESC
       def install(name)
-        # empty
+        @name = name
+        exit USER_ERROR unless installer.install(options[:start].to_sym, options[:disk])
+      rescue StandardError => e
+        logger.fatal('Error:', e)
+        exit SYSTEM_ERROR
       end
 
       desc 'version', 'Print the version of this tool and exit'

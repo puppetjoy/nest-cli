@@ -7,13 +7,9 @@ module Nest
   class Beadm
     include Nest::CLI
 
-    ZFS_ADMIN   = Process.uid.zero? ? 'zfs' : 'sudo zfs'
-    ZPOOL_ADMIN = Process.uid.zero? ? 'zpool' : 'sudo zpool'
-
     def initialize
       @current_fs = %x(zfs list -H -o name `findmnt -n -o SOURCE /`).chomp
-      raise '/ is not a ZFS boot environment' unless @current_fs =~ %r{^(([^/]+).*/ROOT)/([^/]+)$}
-
+      @current_fs =~ %r{^(([^/]+).*/ROOT)/([^/]+)$} or raise '/ is not a ZFS boot environment'
       @be_root = Regexp.last_match(1)
       @zpool = Regexp.last_match(2)
       @current_be = Regexp.last_match(3)
@@ -35,36 +31,34 @@ module Nest
 
     def active
       bootfs = `zpool get -H -o value bootfs #{@zpool}`.chomp
-      raise 'zpool bootfs does not look like a boot environment' \
-        unless bootfs =~ %r{^#{Regexp.escape(@be_root)}/([^/]+)$}
-
+      bootfs =~ %r{^#{Regexp.escape(@be_root)}/([^/]+)$} or raise 'zpool bootfs does not look like a boot environment'
       Regexp.last_match(1)
     end
 
     def create(name)
       if name !~ /^[a-zA-Z0-9][a-zA-Z0-9_:.-]*$/
-        logger.fatal "'#{name}' is not a valid boot environment name"
+        logger.error "'#{name}' is not a valid boot environment name"
         return false
       end
 
       if list.include? name
-        logger.fatal "Boot environment '#{name}' already exists"
+        logger.error "Boot environment '#{name}' already exists"
         return false
       end
 
       logger.info "Creating boot environment '#{name}' from '#{current}'"
 
       snapshot = "beadm-clone-#{current}-to-#{name}"
-      raise 'Failed to create snapshots for cloning' \
-        unless cmd.run!("#{ZFS_ADMIN} snapshot -r #{@current_fs}@#{snapshot}").success?
+      cmd.run!("#{ADMIN}zfs snapshot -r #{@current_fs}@#{snapshot}").success? or
+        raise 'Failed to create snapshots for cloning'
 
       `zfs list -H -o name,mountpoint -r #{@current_fs}`.lines.each do |line|
         (fs, mp) = line.chomp.split("\t", 2)
         clone_fs = "#{@be_root}/#{name}#{fs.sub(/^#{Regexp.escape(@current_fs)}/, '')}"
-        clone_cmd = "#{ZFS_ADMIN} clone -o canmount=noauto -o mountpoint=#{mp.shellescape} " \
+        clone_cmd = "#{ADMIN}zfs clone -o canmount=noauto -o mountpoint=#{mp.shellescape} " \
                     "#{fs}@#{snapshot} #{clone_fs}"
         if cmd.run!(clone_cmd).failure?
-          cmd.run! "#{ZFS_ADMIN} destroy -R #{@current_fs}@#{snapshot}"
+          cmd.run! "#{ADMIN}zfs destroy -R #{@current_fs}@#{snapshot}"
           raise 'Failed to clone snapshot. Manual cleanup may be requried.'
         end
       end
@@ -75,30 +69,29 @@ module Nest
 
     def destroy(name)
       if name == current
-        logger.fatal 'Cannot destroy the active boot environment'
+        logger.error 'Cannot destroy the active boot environment'
         return false
       end
 
-      destroy_be = "#{@be_root}/#{name}"
-
-      unless system "zfs list #{destroy_be.shellescape} > /dev/null 2>&1"
-        logger.fatal "Boot environment '#{name}' does not exist"
+      unless list.include? name
+        logger.error "Boot environment '#{name}' does not exist"
         return false
       end
 
       logger.info "Destroying boot environment '#{name}'"
 
-      raise 'Failed to destroy the boot environment' \
-        unless cmd.run!("#{ZFS_ADMIN} destroy -r #{destroy_be}").success?
+      cmd.run!("#{ADMIN}zfs destroy -r #{@be_root}/#{name}").success? or
+        raise 'Failed to destroy the boot environment'
 
       `zfs list -H -o name -t snapshot -r #{@be_root}`.lines.map(&:chomp).each do |snapshot|
         next unless snapshot =~ /@beadm-clone-(#{Regexp.escape(name)}-to-.*|.*-to-#{Regexp.escape(name)})$/
-        raise 'Failed to destroy snapshot. Manual cleanup may be required.' \
-          unless cmd.run!("#{ZFS_ADMIN} destroy #{snapshot}").success?
+
+        cmd.run!("#{ADMIN}zfs destroy #{snapshot}").success? or
+          raise 'Failed to destroy snapshot. Manual cleanup may be required.'
       end
 
-      logger.warn "/mnt/#{name} exists and couldn't be removed" \
-        if Dir.exist?("/mnt/#{name}") && cmd.run!("sudo rmdir /mnt/#{name}").failure?
+      (!Dir.exist?("/mnt/#{name}") || cmd.run!("#{ADMIN}rmdir /mnt/#{name}").success?) or
+        logger.warn "/mnt/#{name} exists and couldn't be removed"
 
       logger.success "Destroyed boot environment '#{name}'"
       true
@@ -116,7 +109,7 @@ module Nest
       end
 
       if filesystems.empty?
-        logger.fatal "Boot environment '#{name}' does not exist"
+        logger.error "Boot environment '#{name}' does not exist"
         return false
       end
 
@@ -132,20 +125,20 @@ module Nest
       end
 
       unless (filesystems.keys & mounted.keys).empty?
-        logger.fatal 'The boot environment is already mounted'
+        logger.error 'The boot environment is already mounted'
         return false
       end
 
       logger.info "Mounting boot environment '#{name}' at /mnt/#{name}"
 
-      raise "Failed to make /mnt/#{name}" \
-        unless Dir.exist?("/mnt/#{name}") || cmd.run!("sudo mkdir /mnt/#{name}").success?
+      (Dir.exist?("/mnt/#{name}") || cmd.run!("#{ADMIN}mkdir /mnt/#{name}").success?) or
+        raise "Failed to make /mnt/#{name}"
 
       filesystems.each do |fs, mountpoint|
-        next if cmd.run!("sudo mount -t zfs -o zfsutil #{fs} #{mountpoint}").success?
+        next if cmd.run!("#{ADMIN}mount -t zfs -o zfsutil #{fs} #{mountpoint}").success?
 
-        cmd.run! "sudo umount -R /mnt/#{name}"
-        cmd.run! "sudo rmdir /mnt/#{name}"
+        cmd.run! "#{ADMIN}umount -R /mnt/#{name}"
+        cmd.run! "#{ADMIN}rmdir /mnt/#{name}"
         raise 'Failed to mount the boot environment. Manual cleanup may be required.'
       end
 
@@ -165,7 +158,7 @@ module Nest
       end
 
       if filesystems.empty?
-        logger.fatal "Boot environment '#{name}' does not exist"
+        logger.error "Boot environment '#{name}' does not exist"
         return false
       end
 
@@ -182,7 +175,7 @@ module Nest
 
       logger.info "Unmounting boot environment '#{name}'"
 
-      if cmd.run!("sudo umount -R /mnt/#{name}").failure? || cmd.run!("sudo rmdir /mnt/#{name}").failure?
+      if cmd.run!("#{ADMIN}umount -R /mnt/#{name}").failure? || cmd.run!("#{ADMIN}rmdir /mnt/#{name}").failure?
         logger.error 'Failed to unmount the boot environment. Is something using it?'
         return false
       end
@@ -194,14 +187,14 @@ module Nest
     def activate(name = nil)
       if name
         unless list.include? name
-          logger.fatal "Boot environment '#{name}' does not exist"
+          logger.error "Boot environment '#{name}' does not exist"
           return false
         end
 
         logger.info "Configuring boot environment '#{name}' for next reboot"
 
-        raise 'Failed to set zpool \'bootfs\' property' \
-          unless name == active || cmd.run!("#{ZPOOL_ADMIN} set bootfs=#{@be_root}/#{name} #{@zpool}").success?
+        (name == active || cmd.run!("#{ADMIN}zpool set bootfs=#{@be_root}/#{name} #{@zpool}").success?) or
+          raise 'Failed to set zpool \'bootfs\' property'
 
         logger.success "Boot environment '#{name}' will be active next reboot"
       else
@@ -210,15 +203,15 @@ module Nest
         `zfs list -H -o name,canmount,origin -r #{@be_root}`.lines.each do |line|
           (fs, canmount, origin) = line.chomp.split("\t", 3)
 
-          if fs =~ %r{^#{Regexp.escape(@current_fs)}($|/)}
-            raise 'Failed to enable active boot environment' \
-              unless canmount == 'on' || cmd.run!("#{ZFS_ADMIN} set canmount=on #{fs}").success?
+          if fs =~ %r{^#{Regexp.escape(@current_fs)}($|/)} # rubocop:disable Style/GuardClause
+            (canmount == 'on' || cmd.run!("#{ADMIN}zfs set canmount=on #{fs}").success?) or
+              raise 'Failed to enable active boot environment'
 
-            raise 'Failed to promote active boot environment clone' \
-              unless origin == '-' || cmd.run!("#{ZFS_ADMIN} promote #{fs}").success?
+            (origin == '-' || cmd.run!("#{ADMIN}zfs promote #{fs}").success?) or
+              raise 'Failed to promote active boot environment clone'
           else
-            raise 'Failed to disable inactive boot environment' \
-              unless canmount == 'noauto' || cmd.run!("#{ZFS_ADMIN} set canmount=noauto #{fs}")
+            (canmount == 'noauto' || cmd.run!("#{ADMIN}zfs set canmount=noauto #{fs}").success?) or
+              raise 'Failed to disable inactive boot environment'
           end
         end
 
