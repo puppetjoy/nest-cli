@@ -82,6 +82,14 @@ module Nest
         logger.fatal('Error:', e)
         exit SYSTEM_ERROR
       end
+
+      desc 'activate [NAME]', 'Configure and enable a boot environment for mounting at boot'
+      def activate(name = nil)
+        exit USER_ERROR unless beadm.activate(name)
+      rescue StandardError => e
+        logger.fatal('Error:', e)
+        exit SYSTEM_ERROR
+      end
     end
 
     # Entrypoint to the Nest CLI

@@ -31,7 +31,7 @@ module Nest
     end
 
     def active
-      bootfs = `zpool get -H -o value bootfs #{@zpool}`
+      bootfs = `zpool get -H -o value bootfs #{@zpool}`.chomp
       raise 'zpool bootfs does not look like a boot environment' \
         unless bootfs =~ %r{^#{Regexp.escape(@be_root)}/([^/]+)$}
 
@@ -49,9 +49,9 @@ module Nest
         return false
       end
 
-      logger.info "Creating boot environment '#{name}' from '#{@current_be}'"
+      logger.info "Creating boot environment '#{name}' from '#{current}'"
 
-      snapshot = "beadm-clone-#{@current_be}-to-#{name}"
+      snapshot = "beadm-clone-#{current}-to-#{name}"
       raise 'Failed to create snapshots for cloning' \
         unless cmd.run!("sudo zfs snapshot -r #{@current_fs}@#{snapshot}").success?
 
@@ -70,7 +70,7 @@ module Nest
     end
 
     def destroy(name)
-      if name == @current_be
+      if name == current
         logger.fatal 'Cannot destroy the active boot environment'
         return false
       end
@@ -185,6 +185,41 @@ module Nest
 
       logger.success "Unmounted boot environment '#{name}'"
       true
+    end
+
+    def activate(name = nil)
+      if name
+        unless list.include? name
+          logger.fatal "Boot environment '#{name}' does not exist"
+          return false
+        end
+
+        logger.info "Configuring boot environment '#{name}' for next reboot"
+
+        raise 'Failed to set zpool \'bootfs\' property' \
+          unless name == active || cmd.run!("sudo zpool set bootfs=#{@be_root}/#{name} #{@zpool}").success?
+
+        logger.success "Boot environment '#{name}' will be active next reboot"
+      end
+
+      logger.info "Activating current boot environment '#{@current_fs.sub(%r{.*/}, '')}'"
+
+      `zfs list -H -o name,canmount,origin -r #{@be_root}`.lines.each do |line|
+        (fs, canmount, origin) = line.chomp.split("\t", 3)
+
+        if fs =~ %r{^#{Regexp.escape(@current_fs)}($|/)}
+          raise 'Failed to enable active boot environment' \
+            unless canmount == 'on' || cmd.run!("sudo zfs set canmount=on #{fs}").success?
+
+          raise 'Failed to promote active boot environment clone' \
+            unless origin == '-' || cmd.run!("sudo zfs promote #{fs}").success?
+        else
+          raise 'Failed to disable inactive boot environment' \
+            unless canmount == 'noauto' || cmd.run!("sudo zfs set canmount=noauto #{fs}")
+        end
+      end
+
+      logger.success "Boot environment '#{@current_fs.sub(%r{.*/}, '')}' is active"
     end
   end
 end
