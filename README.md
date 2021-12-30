@@ -7,9 +7,10 @@ generally administer the Nest distribution.
 
 ## Installation
 
-[Puppet](https://gitlab.james.tl/nest/puppet) ensures the latest
-`app-admin/nest-cli` package from the [Nest
-overlay](https://gitlab.james.tl/nest/overlay) is installed.
+[Puppet](https://gitlab.james.tl/nest/puppet/-/blob/main/manifests/base/cli.pp)
+ensures the latest `app-admin/nest-cli` package from the [Nest
+overlay](https://gitlab.james.tl/nest/overlay/-/tree/main/app-admin/nest-cli)
+is installed.
 
 ## Usage
 
