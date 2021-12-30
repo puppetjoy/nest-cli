@@ -5,6 +5,7 @@ require_relative 'lib/nest/version'
 Gem::Specification.new do |spec|
   spec.name        = 'nest'
   spec.version     = Nest::VERSION
+  spec.license     = 'GPL-3.0'
   spec.author      = 'James Lee'
   spec.email       = 'james@james.tl'
   spec.homepage    = 'https://james.tl/projects/nest/'
@@ -17,6 +18,7 @@ Gem::Specification.new do |spec|
   spec.metadata['rubygems_mfa_required'] = 'true'
   spec.metadata['source_code_uri']       = 'https://gitlab.james.tl/nest/cli'
 
+  spec.executables   = ['nest']
   spec.files         = Dir['lib/**/*.rb']
   spec.require_paths = ['lib']
   spec.required_ruby_version = '>= 2.6.0'
