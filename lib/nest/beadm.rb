@@ -204,26 +204,26 @@ module Nest
           unless name == active || cmd.run!("#{ZPOOL_ADMIN} set bootfs=#{@be_root}/#{name} #{@zpool}").success?
 
         logger.success "Boot environment '#{name}' will be active next reboot"
-      end
+      else
+        logger.info "Activating current boot environment '#{@current_fs.sub(%r{.*/}, '')}'"
 
-      logger.info "Activating current boot environment '#{@current_fs.sub(%r{.*/}, '')}'"
+        `zfs list -H -o name,canmount,origin -r #{@be_root}`.lines.each do |line|
+          (fs, canmount, origin) = line.chomp.split("\t", 3)
 
-      `zfs list -H -o name,canmount,origin -r #{@be_root}`.lines.each do |line|
-        (fs, canmount, origin) = line.chomp.split("\t", 3)
+          if fs =~ %r{^#{Regexp.escape(@current_fs)}($|/)}
+            raise 'Failed to enable active boot environment' \
+              unless canmount == 'on' || cmd.run!("#{ZFS_ADMIN} set canmount=on #{fs}").success?
 
-        if fs =~ %r{^#{Regexp.escape(@current_fs)}($|/)}
-          raise 'Failed to enable active boot environment' \
-            unless canmount == 'on' || cmd.run!("#{ZFS_ADMIN} set canmount=on #{fs}").success?
-
-          raise 'Failed to promote active boot environment clone' \
-            unless origin == '-' || cmd.run!("#{ZFS_ADMIN} promote #{fs}").success?
-        else
-          raise 'Failed to disable inactive boot environment' \
-            unless canmount == 'noauto' || cmd.run!("#{ZFS_ADMIN} set canmount=noauto #{fs}")
+            raise 'Failed to promote active boot environment clone' \
+              unless origin == '-' || cmd.run!("#{ZFS_ADMIN} promote #{fs}").success?
+          else
+            raise 'Failed to disable inactive boot environment' \
+              unless canmount == 'noauto' || cmd.run!("#{ZFS_ADMIN} set canmount=noauto #{fs}")
+          end
         end
-      end
 
-      logger.success "Boot environment '#{@current_fs.sub(%r{.*/}, '')}' is active"
+        logger.success "Boot environment '#{@current_fs.sub(%r{.*/}, '')}' is active"
+      end
     end
   end
 end
