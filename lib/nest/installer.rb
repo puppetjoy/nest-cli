@@ -25,13 +25,19 @@ module Nest
       when 'beagleboneblack'
         require_relative 'installer/beagleboneblack'
         Nest::Installer::BeagleBoneBlack.new(name, image, platform, role)
+      when 'pinebookpro'
+        require_relative 'installer/pinebookpro'
+        Nest::Installer::PinebookPro.new(name, image, platform, role)
       when 'live'
         require_relative 'installer/live'
         Nest::Installer::Live.new(name, image, platform, role)
+      when 'raspberrypi'
+        require_relative 'installer/raspberrypi'
+        Nest::Installer::RaspberryPi.new(name, image, platform, role)
       when 'sopine'
         require_relative 'installer/sopine'
         Nest::Installer::Sopine.new(name, image, platform, role)
-      when 'haswell', 'pinebookpro', 'raspberrypi'
+      when 'haswell'
         Nest::Installer.new(name, image, platform, role)
       else
         raise "Platform '#{platform}' is unsupported"
@@ -45,7 +51,7 @@ module Nest
       @role = role
     end
 
-    def install(disk, force, start = :partition)
+    def install(disk, encrypt, force, start = :partition, supports_encryption: true)
       @force = force
 
       steps = {
@@ -62,13 +68,32 @@ module Nest
         return false
       end
 
+      if encrypt && !supports_encryption
+        logger.error "Platform '#{platform}' does not support encryption"
+        return false
+      end
+
+      if steps.keys.index(start) <= steps.keys.index(:mount) && encrypt
+        passphrase = prompt.mask('Encryption passphrase:')
+        if steps.keys.index(start) <= steps.keys.index(:format)
+          if prompt.mask('Encryption passphrase (again):') != passphrase
+            logger.error 'Passphrases do not match'
+            return false
+          end
+          steps[:format] = -> { format(passphrase) }
+        end
+        steps[:mount] = -> { mount(passphrase) }
+      end
+
       steps.values[(steps.keys.index start)..].drop_while(&:call).empty?
     end
 
     def partition(disk, gpt_table_length = nil)
+      return false unless zpool_absent?
+
       logger.info "Partitioning #{disk}"
 
-      cmd.run!("#{ADMIN}wipefs -a #{disk}").success? or
+      cmd.run!(ADMIN + "wipefs -a #{disk}").success? or
         logger.warn "Failed to wipe signatures from #{disk}"
 
       script = StringIO.new
@@ -93,19 +118,59 @@ module Nest
       end
       script.rewind
 
-      if cmd.run!("#{ADMIN}sfdisk #{disk}", in: script).failure?
+      if cmd.run!(ADMIN + "sfdisk -q #{disk}", in: script).failure?
         logger.error "Failed to partition #{disk}"
         return false
       end
 
+      cmd.run 'udevadm settle'
+
       logger.success "#{disk} is partitioned"
     end
 
-    def format
-      logger.warn 'Format placeholder'
+    def format(passphrase = nil, swap_size = '4G')
+      return false unless zpool_absent?
+
+      zroot = passphrase ? "#{name}/crypt" : name
+
+      logger.info "Creating ZFS pool '#{name}'"
+      cmd.run ADMIN + 'zpool create -f -m none -o ashift=9 -O compression=lz4 ' \
+                      "-O xattr=sa -O acltype=posixacl -R #{target} #{name} #{name}"
+      if passphrase
+        cmd.run(ADMIN + "zfs create -o encryption=aes-128-gcm -o keyformat=passphrase -o keylocation=prompt #{zroot}",
+                input: passphrase)
+      end
+      cmd.run ADMIN + "zfs create #{zroot}/ROOT"
+      cmd.run ADMIN + "zfs create -o mountpoint=/ #{zroot}/ROOT/A"
+      cmd.run ADMIN + "zfs create -o mountpoint=/var #{zroot}/ROOT/A/var"
+      cmd.run ADMIN + "zfs create -o mountpoint=/usr/lib/debug -o compression=zstd #{zroot}/ROOT/A/debug"
+      cmd.run ADMIN + "zfs create -o mountpoint=/usr/src -o compression=zstd #{zroot}/ROOT/A/src"
+      cmd.run ADMIN + "zfs create -o mountpoint=/home #{zroot}/home"
+      cmd.run ADMIN + "zfs create #{zroot}/home/james"
+      cmd.run ADMIN + "zpool set bootfs=#{zroot}/ROOT/A #{name}"
+      logger.success "Created ZFS pool '#{name}'"
+
+      logger.info 'Creating swap space'
+      cmd.run ADMIN + "zfs create -V #{swap_size} -b 4096 -o refreservation=none #{zroot}/swap"
+      cmd.run 'udevadm settle'
+      cmd.run ADMIN + "mkswap -L #{labelname}-swap /dev/zvol/#{zroot}/swap"
+      logger.success 'Created swap space'
+
+      unless File.open("#{image}/etc/fstab").grep(/#{labelname}-fscache/).empty?
+        logger.info 'Creating fscache'
+        cmd.run ADMIN + "zfs create -V 2G #{zroot}/fscache"
+        cmd.run 'udevadm settle'
+        cmd.run ADMIN + "mkfs.ext4 -L #{labelname}-fscache /dev/zvol/#{zroot}/fscache"
+        cmd.run ADMIN + "tune2fs -o discard /dev/zvol/#{zroot}/fscache"
+        logger.success 'Created fscache'
+      end
+
+      logger.info 'Creating boot filesystem'
+      cmd.run ADMIN + "mkfs.vfat /dev/disk/by-partlabel/#{name}-boot"
+      logger.success 'Created boot filesystem'
     end
 
-    def mount
+    def mount(_passphrase = nil)
       logger.warn 'Mount placeholder'
     end
 
@@ -119,6 +184,31 @@ module Nest
 
     def firmware(_disk)
       logger.warn 'Firmware placeholder'
+    end
+
+    protected
+
+    def zpool_absent?
+      if system "zpool list #{name} > /dev/null 2>&1"
+        if @force
+          logger.warn "Destroying existing ZFS pool '#{name}'"
+          cmd.run(ADMIN + "zpool destroy #{name}")
+        else
+          logger.error "ZFS pool '#{name}' already exists. Destroy it to continue."
+          return false
+        end
+      end
+      true
+    end
+
+    def labelname
+      name =~ /(\d*)$/
+      suffix = Regexp.last_match(1)
+      name[0..(7 - suffix.length)] + suffix
+    end
+
+    def target
+      "/mnt/#{name}"
     end
   end
 end

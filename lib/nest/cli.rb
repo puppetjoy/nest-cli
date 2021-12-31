@@ -26,6 +26,11 @@ module Nest
       $logger ||= TTY::Logger.new { |config| config.level = $LOG_DEBUG ? :debug : :info }
     end
 
+    def prompt
+      require 'tty-prompt'
+      $prompt ||= TTY::Prompt.new
+    end
+
     # Subcommand to manage ZFS boot environments
     class Beadm < Thor
       include Nest::CLI
@@ -123,6 +128,7 @@ module Nest
 
       desc 'install [options] NAME', 'Install a new host'
       option :disk, aliases: '-d', required: true, desc: 'The disk to format and install on'
+      option :encrypt, aliases: '-e', type: :boolean, desc: 'Use ZFS encryption'
       option :force, type: :boolean, desc: 'Allow installer to overwrite existing files'
       option :start, aliases: '-s', banner: 'STEP', default: 'partition', desc: 'Start installation from this point'
       long_desc <<-LONGDESC
@@ -141,7 +147,10 @@ module Nest
       LONGDESC
       def install(name)
         @name = name
-        exit USER_ERROR unless installer.install(options[:disk], options[:force], options[:start].to_sym)
+        exit USER_ERROR unless installer.install(options[:disk],
+                                                 options[:encrypt],
+                                                 options[:force],
+                                                 options[:start].to_sym)
       rescue StandardError => e
         logger.fatal('Error:', e)
         exit SYSTEM_ERROR

@@ -26,4 +26,5 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'thor', '~> 1.1'
   spec.add_dependency 'tty-command', '~> 0.10.1'
   spec.add_dependency 'tty-logger', '~> 0.6.0'
+  spec.add_dependency 'tty-prompt', '~> 0.23.1'
 end

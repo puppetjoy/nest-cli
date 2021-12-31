@@ -7,6 +7,10 @@ module Nest
       def partition(disk)
         super(disk, 56)
       end
+
+      def format(passphrase = nil)
+        super(passphrase, '4G')
+      end
     end
   end
 end

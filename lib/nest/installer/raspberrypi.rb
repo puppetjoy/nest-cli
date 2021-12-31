@@ -3,9 +3,9 @@
 module Nest
   class Installer
     # Platform installer overrides
-    class BeagleBoneBlack < Installer
+    class RaspberryPi < Installer
       def format(passphrase = nil)
-        super(passphrase, '1536M')
+        super(passphrase, '8G')
       end
     end
   end
