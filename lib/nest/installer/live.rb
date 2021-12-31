@@ -11,7 +11,7 @@ module Nest
       end
 
       def partition(_disk)
-        return false unless image_unmounted?
+        return false unless ensure_image_unmounted
 
         if File.exist? rootfs_img
           if @force
@@ -31,7 +31,7 @@ module Nest
       end
 
       def format
-        return false unless image_unmounted?
+        return false unless ensure_image_unmounted
 
         logger.info 'Formatting live image'
         cmd.run "mkfs.ext4 -q #{rootfs_img}"
@@ -39,11 +39,20 @@ module Nest
         logger.success 'Formatted live image'
       end
 
-      protected
+      def mount
+        if device_mounted?(rootfs_img, at: target)
+          logger.info 'Live image is already mounted'
+        else
+          return false unless ensure_image_unmounted
 
-      def image_unmounted?
-        existing_device_unmounted?(rootfs_img, 'live image')
+          logger.info 'Mounting live image'
+          cmd.run(ADMIN + "mkdir #{target}") unless Dir.exist? target
+          cmd.run ADMIN + "mount #{rootfs_img} #{target}"
+          logger.success 'Mounted live image'
+        end
       end
+
+      protected
 
       def build_dir
         "/var/tmp/nest/#{name}"
@@ -55,6 +64,12 @@ module Nest
 
       def rootfs_img
         "#{liveos_dir}/rootfs.img"
+      end
+
+      private
+
+      def ensure_image_unmounted
+        ensure_device_unmounted(rootfs_img, 'live image')
       end
     end
   end

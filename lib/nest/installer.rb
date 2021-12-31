@@ -201,16 +201,7 @@ module Nest
       if device_mounted?(boot_device, at: boot_dir)
         logger.info 'Boot device is already mounted'
       else
-        if device_mounted?(boot_device)
-          if @force
-            logger.warn "Unmounting boot device to remount it at #{boot_dir}"
-            cmd.run ADMIN + "umount #{boot_device}"
-          else
-            logger.error "Boot device #{boot_device} is currently mounted"
-            logger.error "Unmount it or use '--force' to continue"
-            return false
-          end
-        end
+        return false unless ensure_boot_device_unmounted
 
         logger.info 'Mounting boot device'
         cmd.run(ADMIN + "mkdir #{boot_dir}") unless Dir.exist? boot_dir
@@ -235,10 +226,10 @@ module Nest
 
     protected
 
-    def existing_device_unmounted?(device, description)
+    def ensure_device_unmounted(device, description)
       if device_mounted? device
         if @force
-          logger.warn "Unmounting existing #{description}"
+          logger.warn "Unmounting #{description}"
           cmd.run ADMIN + "umount #{device}"
         else
           logger.error "Existing #{description} is mounted"
@@ -269,8 +260,8 @@ module Nest
       "/dev/disk/by-partlabel/#{name}-boot"
     end
 
-    def boot_device_unmounted?
-      existing_device_unmounted?(boot_device, 'boot device')
+    def ensure_boot_device_unmounted
+      ensure_device_unmounted(boot_device, 'boot device')
     end
 
     def device_mounted?(device, at: nil)
@@ -282,7 +273,7 @@ module Nest
     end
 
     def devices_ready?
-      boot_device_unmounted? & zpool_absent?
+      ensure_boot_device_unmounted & zpool_absent?
     end
 
     def zpool_absent?
