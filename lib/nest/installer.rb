@@ -89,7 +89,7 @@ module Nest
     end
 
     def partition(disk, gpt_table_length = nil)
-      return false unless zpool_absent?
+      return false unless devices_ready?
 
       logger.info "Partitioning #{disk}"
 
@@ -129,7 +129,7 @@ module Nest
     end
 
     def format(passphrase = nil, swap_size = '4G')
-      return false unless zpool_absent?
+      return false unless devices_ready?
 
       zroot = passphrase ? "#{name}/crypt" : name
 
@@ -166,12 +166,59 @@ module Nest
       end
 
       logger.info 'Creating boot filesystem'
-      cmd.run ADMIN + "mkfs.vfat /dev/disk/by-partlabel/#{name}-boot"
+      cmd.run ADMIN + "mkfs.vfat #{boot_device}"
       logger.success 'Created boot filesystem'
     end
 
-    def mount(_passphrase = nil)
-      logger.warn 'Mount placeholder'
+    def mount(passphrase = nil)
+      if zpool_mounted?
+        logger.info "ZFS pool '#{name}' is already mounted"
+      else
+        if zpool_imported?
+          if @force
+            logger.warn "Exporting ZFS pool '#{name}' to reimport it at #{target}"
+            cmd.run ADMIN + "zpool export #{name}"
+          else
+            logger.error "ZFS pool '#{name}' is imported but not mounted to #{target}"
+            logger.error "Export the pool or use '--force' to continue"
+            return false
+          end
+        end
+
+        logger.info 'Importing ZFS pool'
+        cmd.run ADMIN + "zpool import -f -R #{target} #{name}"
+        cmd.run(ADMIN + "zfs load-key -r -L prompt #{name}/crypt", input: passphrase) if passphrase
+        cmd.run ADMIN + 'zfs mount -a' # rubocop:disable Style/StringConcatenation
+        logger.success 'Imported ZFS pool'
+      end
+
+      unless system "mountpoint -q #{target}"
+        logger.error "Nothing is mounted at #{target}"
+        logger.error 'Is the ZFS pool encrypted?'
+        return false
+      end
+
+      if device_mounted?(boot_device, at: boot_dir)
+        logger.info 'Boot device is already mounted'
+      else
+        if device_mounted?(boot_device)
+          if @force
+            logger.warn "Unmounting boot device to remount it at #{boot_dir}"
+            cmd.run ADMIN + "umount #{boot_device}"
+          else
+            logger.error "Boot device #{boot_device} is currently mounted"
+            logger.error "Unmount it or use '--force' to continue"
+            return false
+          end
+        end
+
+        logger.info 'Mounting boot device'
+        cmd.run(ADMIN + "mkdir #{boot_dir}") unless Dir.exist? boot_dir
+        cmd.run ADMIN + "mount #{boot_device} #{target}/boot"
+        logger.success 'Mounted boot device'
+      end
+
+      true
     end
 
     def copy
@@ -188,13 +235,14 @@ module Nest
 
     protected
 
-    def zpool_absent?
-      if system "zpool list #{name} > /dev/null 2>&1"
+    def existing_device_unmounted?(device, description)
+      if device_mounted? device
         if @force
-          logger.warn "Destroying existing ZFS pool '#{name}'"
-          cmd.run ADMIN + "zpool destroy #{name}"
+          logger.warn "Unmounting existing #{description}"
+          cmd.run ADMIN + "umount #{device}"
         else
-          logger.error "ZFS pool '#{name}' already exists. Destroy it to continue."
+          logger.error "Existing #{description} is mounted"
+          logger.error "Unmount it or use '--force' to continue"
           return false
         end
       end
@@ -209,6 +257,57 @@ module Nest
 
     def target
       "/mnt/#{name}"
+    end
+
+    def boot_dir
+      "#{target}/boot"
+    end
+
+    private
+
+    def boot_device
+      "/dev/disk/by-partlabel/#{name}-boot"
+    end
+
+    def boot_device_unmounted?
+      existing_device_unmounted?(boot_device, 'boot device')
+    end
+
+    def device_mounted?(device, at: nil)
+      if at
+        `mount`.match?(/^#{File.realpath device} on #{at}\s/)
+      else
+        `mount`.match?(/^#{File.realpath device}\s/)
+      end
+    end
+
+    def devices_ready?
+      boot_device_unmounted? & zpool_absent?
+    end
+
+    def zpool_absent?
+      if zpool_imported?
+        if @force
+          logger.warn "Destroying existing ZFS pool '#{name}'"
+          cmd.run ADMIN + "zpool destroy #{name}"
+        else
+          logger.error "ZFS pool '#{name}' already exists"
+          logger.error "Destroy it or use '--force' to continue"
+          return false
+        end
+      end
+      true
+    end
+
+    def zpool_imported?
+      system "zpool list #{name} > /dev/null 2>&1"
+    end
+
+    def zpool_mounted?
+      return false unless zpool_imported?
+
+      altroot = `zpool get -H -o value altroot #{name}`.chomp
+      altroot == target
     end
   end
 end

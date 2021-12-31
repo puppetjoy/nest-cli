@@ -6,10 +6,6 @@ module Nest
     class Live < Installer
       IMAGE_SIZE = '20G'
 
-      def initialize(name, image, platform, role)
-        super(name, image, platform, role)
-      end
-
       def install(disk, encrypt, force, start = :partition)
         super(disk, encrypt, force, start, supports_encryption: false)
       end
@@ -22,7 +18,8 @@ module Nest
             logger.warn 'Forcing removal of existing build tree'
             cmd.run "rm -rf #{build_dir}"
           else
-            logger.error "Build tree at #{build_dir} already exists. Remove it to continue."
+            logger.error "Build tree at #{build_dir} already exists"
+            logger.error "Remove it or use '--force' to continue"
             return false
           end
         end
@@ -45,20 +42,7 @@ module Nest
       protected
 
       def image_unmounted?
-        if `mount` =~ /^#{rootfs_img}\s/
-          if @force
-            logger.warn 'Unmounting existing live image'
-            cmd.run ADMIN + "umount #{rootfs_img}"
-            if `mount` =~ /^#{rootfs_img}\s/ and !$DRY_RUN
-              logger.error 'Failed to unmount the existing live image'
-              return false
-            end
-          else
-            logger.error 'Existing live image is mounted. Unmount and destroy it to continue.'
-            return false
-          end
-        end
-        true
+        existing_device_unmounted?(rootfs_img, 'live image')
       end
 
       def build_dir
