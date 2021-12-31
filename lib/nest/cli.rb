@@ -127,30 +127,48 @@ module Nest
       subcommand 'beadm', Beadm
 
       desc 'install [options] NAME', 'Install a new host'
+      option :clean, type: :boolean, desc: 'Just run the cleanup step'
       option :disk, aliases: '-d', required: true, desc: 'The disk to format and install on'
       option :encrypt, aliases: '-e', type: :boolean, desc: 'Use ZFS encryption'
-      option :force, type: :boolean, desc: 'Allow installer to overwrite existing files'
-      option :start, aliases: '-s', banner: 'STEP', default: 'partition', desc: 'Start installation from this point'
+      option :force, type: :boolean, desc: 'Try to correct unexpected system states'
+      option :step, aliases: '-s', desc: 'Only run this step'
+      option :begin, banner: 'STEP', default: 'partition', desc: 'The first installation step'
+      option :end, banner: 'STEP', default: 'firmware', desc: 'The last installation step'
       long_desc <<-LONGDESC
         Install a new host called NAME onto DISK starting at STEP where:
 
         \x5 NAME is a host with a valid Stage 3 image under /nest/hosts
         \x5 DISK is a device name, like /dev/sda
-        \x5 STEP is one of the following points where the installer should start
+        \x5 STEP is one of the following points where the installer should start and stop
 
-        \x5* partition (default)
+        \x5* partition (default start)
         \x5* format
         \x5* mount
         \x5* copy
         \x5* bootloader
-        \x5* firmware
+        \x5* unmount
+        \x5* firmware (default stop)
+        \x5* cleanup
       LONGDESC
       def install(name)
         @name = name
+
+        if options[:clean]
+          start = :cleanup
+          stop  = :cleanup
+        elsif options[:step]
+          start = options[:step]
+          stop  = options[:step]
+        else
+          start = options[:begin]
+          stop  = options[:end]
+        end
+
         exit USER_ERROR unless installer.install(options[:disk],
                                                  options[:encrypt],
                                                  options[:force],
-                                                 options[:start].to_sym)
+                                                 start.to_sym,
+                                                 stop.to_sym)
       rescue StandardError => e
         logger.fatal('Error:', e)
         exit SYSTEM_ERROR

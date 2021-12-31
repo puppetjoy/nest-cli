@@ -6,8 +6,8 @@ module Nest
     class Live < Installer
       IMAGE_SIZE = '20G'
 
-      def install(disk, encrypt, force, start = :partition)
-        super(disk, encrypt, force, start, supports_encryption: false)
+      def install(disk, encrypt, force, start = :partition, stop = :firmware)
+        super(disk, encrypt, force, start, stop, supports_encryption: false)
       end
 
       def partition(_disk)
@@ -52,10 +52,18 @@ module Nest
         end
       end
 
+      def cleanup
+        if Dir.exist? build_dir
+          logger.info 'Cleaning up'
+          cmd.run "rm -rf #{build_dir}"
+        end
+        super
+      end
+
       protected
 
       def build_dir
-        "/var/tmp/nest/#{name}"
+        "/var/tmp/nest-install-#{name}"
       end
 
       def liveos_dir

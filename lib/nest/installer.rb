@@ -51,7 +51,7 @@ module Nest
       @role = role
     end
 
-    def install(disk, encrypt, force, start = :partition, supports_encryption: true)
+    def install(disk, encrypt, force, start = :partition, stop = :firmware, supports_encryption: true)
       @force = force
 
       steps = {
@@ -60,7 +60,9 @@ module Nest
         mount: -> { mount },
         copy: -> { copy },
         bootloader: -> { bootloader },
-        firmware: -> { firmware(disk) }
+        unmount: -> { unmount },
+        firmware: -> { firmware(disk) },
+        cleanup: -> { cleanup }
       }
 
       unless steps[start]
@@ -85,7 +87,7 @@ module Nest
         steps[:mount] = -> { mount(passphrase) }
       end
 
-      steps.values[(steps.keys.index start)..].drop_while(&:call).empty?
+      steps.values[(steps.keys.index start)..(steps.keys.index stop)].drop_while(&:call).empty?
     end
 
     def partition(disk, gpt_table_length = nil)
@@ -171,6 +173,8 @@ module Nest
     end
 
     def mount(passphrase = nil)
+      logger.info 'Mounting filesystems'
+
       if zpool_mounted?
         logger.info "ZFS pool '#{name}' is already mounted"
       else
@@ -209,7 +213,7 @@ module Nest
         logger.success 'Mounted boot device'
       end
 
-      true
+      logger.success 'Filesystems mounted'
     end
 
     def copy
@@ -220,8 +224,32 @@ module Nest
       logger.warn 'Bootloader placeholder'
     end
 
+    def unmount
+      logger.info 'Unmounting filesystems'
+
+      if system "mountpoint -q #{target}"
+        logger.info "Unmounting all filesystems at #{target}"
+        cmd.run ADMIN + "umount -R #{target}"
+        logger.success "Unmounted all filesystems at #{target}"
+      end
+
+      if zpool_imported?
+        logger.info "Exporting ZFS pool '#{name}'"
+        cmd.run ADMIN + "zpool export #{name}"
+        logger.success "Exporting ZFS pool '#{name}'"
+      end
+
+      cmd.run(ADMIN + "rmdir #{target}") if Dir.exist? target
+
+      logger.success 'Filesystems unmounted'
+    end
+
     def firmware(_disk)
       logger.warn 'Firmware placeholder'
+    end
+
+    def cleanup
+      logger.success 'All clean!'
     end
 
     protected
@@ -265,10 +293,11 @@ module Nest
     end
 
     def device_mounted?(device, at: nil)
+      device = File.realpath(device) if File.exist?(device)
       if at
-        `mount`.match?(/^#{File.realpath device} on #{at}\s/)
+        `mount`.match?(/^#{device} on #{at}\s/)
       else
-        `mount`.match?(/^#{File.realpath device}\s/)
+        `mount`.match?(/^#{device}\s/)
       end
     end
 
