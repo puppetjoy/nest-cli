@@ -25,6 +25,9 @@ module Nest
       when 'beagleboneblack'
         require_relative 'installer/beagleboneblack'
         Nest::Installer::BeagleBoneBlack.new(name, image, platform, role)
+      when 'live'
+        require_relative 'installer/live'
+        Nest::Installer::Live.new(name, image, platform, role)
       when 'sopine'
         require_relative 'installer/sopine'
         Nest::Installer::Sopine.new(name, image, platform, role)
@@ -42,14 +45,16 @@ module Nest
       @role = role
     end
 
-    def install(start = :partition, disk = nil)
+    def install(disk, force, start = :partition)
+      @force = force
+
       steps = {
         partition: -> { partition(disk) },
         format: -> { format },
         mount: -> { mount },
         copy: -> { copy },
         bootloader: -> { bootloader },
-        firmware: -> { firmware }
+        firmware: -> { firmware(disk) }
       }
 
       unless steps[start]
@@ -61,11 +66,6 @@ module Nest
     end
 
     def partition(disk, gpt_table_length = nil)
-      if disk.nil?
-        logger.error "A disk must be provided with '--disk=DISK'"
-        return false
-      end
-
       logger.info "Partitioning #{disk}"
 
       cmd.run!("#{ADMIN}wipefs -a #{disk}").success? or
@@ -117,7 +117,7 @@ module Nest
       logger.warn 'Bootloader placeholder'
     end
 
-    def firmware
+    def firmware(_disk)
       logger.warn 'Firmware placeholder'
     end
   end

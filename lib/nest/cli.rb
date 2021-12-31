@@ -122,7 +122,8 @@ module Nest
       subcommand 'beadm', Beadm
 
       desc 'install [options] NAME', 'Install a new host'
-      option :disk, aliases: '-d', desc: 'The disk to format and install on'
+      option :disk, aliases: '-d', required: true, desc: 'The disk to format and install on'
+      option :force, type: :boolean, desc: 'Allow installer to overwrite existing files'
       option :start, aliases: '-s', banner: 'STEP', default: 'partition', desc: 'Start installation from this point'
       long_desc <<-LONGDESC
         Install a new host called NAME onto DISK starting at STEP where:
@@ -140,7 +141,7 @@ module Nest
       LONGDESC
       def install(name)
         @name = name
-        exit USER_ERROR unless installer.install(options[:start].to_sym, options[:disk])
+        exit USER_ERROR unless installer.install(options[:disk], options[:force], options[:start].to_sym)
       rescue StandardError => e
         logger.fatal('Error:', e)
         exit SYSTEM_ERROR
