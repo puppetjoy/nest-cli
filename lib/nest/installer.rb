@@ -160,7 +160,7 @@ module Nest
         logger.info 'Creating fscache'
         cmd.run ADMIN + "zfs create -V 2G #{zroot}/fscache"
         cmd.run 'udevadm settle'
-        cmd.run ADMIN + "mkfs.ext4 -L #{labelname}-fscache /dev/zvol/#{zroot}/fscache"
+        cmd.run ADMIN + "mkfs.ext4 -q -L #{labelname}-fscache /dev/zvol/#{zroot}/fscache"
         cmd.run ADMIN + "tune2fs -o discard /dev/zvol/#{zroot}/fscache"
         logger.success 'Created fscache'
       end
@@ -192,7 +192,7 @@ module Nest
       if system "zpool list #{name} > /dev/null 2>&1"
         if @force
           logger.warn "Destroying existing ZFS pool '#{name}'"
-          cmd.run(ADMIN + "zpool destroy #{name}")
+          cmd.run ADMIN + "zpool destroy #{name}"
         else
           logger.error "ZFS pool '#{name}' already exists. Destroy it to continue."
           return false

@@ -6,11 +6,8 @@ module Nest
     class Live < Installer
       IMAGE_SIZE = '20G'
 
-      attr_reader :build_dir
-
       def initialize(name, image, platform, role)
         super(name, image, platform, role)
-        @build_dir = "/var/tmp/nest/#{name}"
       end
 
       def install(disk, encrypt, force, start = :partition)
@@ -18,9 +15,9 @@ module Nest
       end
 
       def partition(_disk)
-        liveos_dir = "#{build_dir}/LiveOS/squashfs-root/LiveOS"
+        return false unless image_unmounted?
 
-        if File.exist? "#{liveos_dir}/rootfs.img"
+        if File.exist? rootfs_img
           if @force
             logger.warn 'Forcing removal of existing build tree'
             cmd.run "rm -rf #{build_dir}"
@@ -30,10 +27,50 @@ module Nest
           end
         end
 
-        logger.info 'Making live image structure'
+        logger.info 'Creating live image structure'
         cmd.run "mkdir -p #{liveos_dir}"
-        cmd.run "truncate -s #{IMAGE_SIZE} #{liveos_dir}/rootfs.img"
+        cmd.run "truncate -s #{IMAGE_SIZE} #{rootfs_img}"
         logger.success 'Created live image structure'
+      end
+
+      def format
+        return false unless image_unmounted?
+
+        logger.info 'Formatting live image'
+        cmd.run "mkfs.ext4 -q #{rootfs_img}"
+        cmd.run "tune2fs -o discard #{rootfs_img}"
+        logger.success 'Formatted live image'
+      end
+
+      protected
+
+      def image_unmounted?
+        if `mount` =~ /^#{rootfs_img}\s/
+          if @force
+            logger.warn 'Unmounting existing live image'
+            cmd.run ADMIN + "umount #{rootfs_img}"
+            if `mount` =~ /^#{rootfs_img}\s/ and !$DRY_RUN
+              logger.error 'Failed to unmount the existing live image'
+              return false
+            end
+          else
+            logger.error 'Existing live image is mounted. Unmount and destroy it to continue.'
+            return false
+          end
+        end
+        true
+      end
+
+      def build_dir
+        "/var/tmp/nest/#{name}"
+      end
+
+      def liveos_dir
+        "#{build_dir}/LiveOS/squashfs-root/LiveOS"
+      end
+
+      def rootfs_img
+        "#{liveos_dir}/rootfs.img"
       end
     end
   end
