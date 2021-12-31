@@ -6,8 +6,8 @@ module Nest
     class Live < Installer
       IMAGE_SIZE = '20G'
 
-      def install(disk, encrypt, force, start = :partition, stop = :firmware)
-        super(disk, encrypt, force, start, stop, supports_encryption: false)
+      def install(*args)
+        super(*args, supports_encryption: false)
       end
 
       def partition(_disk)
