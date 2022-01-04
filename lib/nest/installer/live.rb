@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'shellwords'
+
 module Nest
   class Installer
     # Platform installer overrides
@@ -16,9 +18,9 @@ module Nest
         if File.exist? rootfs_img
           if @force
             logger.warn 'Forcing removal of existing build tree'
-            cmd.run "rm -rf #{build_dir}"
+            cmd.run "rm -rf #{temp_dir}"
           else
-            logger.error "Build tree at #{build_dir} already exists"
+            logger.error "Build tree at #{temp_dir} already exists"
             logger.error "Remove it or use '--force' to continue"
             return false
           end
@@ -52,18 +54,41 @@ module Nest
         end
       end
 
+      def bootloader
+        return false unless super
+        logger.info "Copy bootloader for bootable image"
+        cmd.run("mkdir -p #{finish_dir}/boot") unless Dir.exist? "#{finish_dir}/boot"
+        cmd.run "cp -a #{target}/boot/* #{finish_dir}/boot"
+        logger.success "Copied bootloader for bootable image"
+      end
+
+      def firmware(disk)
+        logger.info "Creating bootable image #{disk}"
+        cmd.run("mkdir -p #{finish_dir}/LiveOS") unless Dir.exist? "#{finish_dir}/LiveOS"
+        cmd.run("mksquashfs #{build_dir}/LiveOS/squashfs-root #{finish_dir}/LiveOS/squashfs.img -noappend", out: '/dev/stdout')
+        cmd.run "grub-mkrescue --modules=part_gpt -o #{disk.shellescape} #{finish_dir} -- -volid #{name.upcase}"
+        logger.success "Created bootable image #{disk}"
+      end
+
       def cleanup
-        if Dir.exist? build_dir
-          logger.info 'Cleaning up'
-          cmd.run "rm -rf #{build_dir}"
-        end
-        super
+        logger.info 'Cleaning up'
+        unmount
+        cmd.run("rm -rf #{temp_dir}") if Dir.exist? temp_dir
+        logger.success 'All clean!'
       end
 
       protected
 
-      def build_dir
+      def temp_dir
         "/var/tmp/nest-install-#{name}"
+      end
+
+      def build_dir
+        "#{temp_dir}/build"
+      end
+
+      def finish_dir
+        "#{temp_dir}/finish"
       end
 
       def liveos_dir

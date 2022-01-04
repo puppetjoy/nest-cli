@@ -196,7 +196,7 @@ module Nest
         logger.success 'Imported ZFS pool'
       end
 
-      unless system "mountpoint -q #{target}"
+      unless $DRY_RUN || ensure_target_mounted
         logger.error "Nothing is mounted at #{target}"
         logger.error 'Is the ZFS pool encrypted?'
         return false
@@ -217,38 +217,40 @@ module Nest
     end
 
     def copy
-      logger.warn 'Copy placeholder'
+      return false unless $DRY_RUN || ensure_target_mounted
+
+      logger.info 'Copying image'
+      cmd.run(ADMIN + "rsync -aAHX --delete --info=progress2 root@falcon:#{image}/ #{target}", out: '/dev/stdout')
+      logger.success 'Copied image'
     end
 
     def bootloader
-      logger.warn 'Bootloader placeholder'
+      return false unless $DRY_RUN || ensure_target_mounted
+
+      logger.info 'Installing bootloader'
+      puppet = nspawn "puppet agent --test --tags nest::base::bootloader,nest::base::dracut"
+      unless [0, 2].include? puppet.exit_status
+        logger.error 'Puppet run to install bootloader failed'
+        return false
+      end
+      logger.success 'Installed bootloader'
     end
 
     def unmount
       logger.info 'Unmounting filesystems'
-
-      if system "mountpoint -q #{target}"
-        logger.info "Unmounting all filesystems at #{target}"
-        cmd.run ADMIN + "umount -R #{target}"
-        logger.success "Unmounted all filesystems at #{target}"
-      end
-
-      if zpool_imported?
-        logger.info "Exporting ZFS pool '#{name}'"
-        cmd.run ADMIN + "zpool export #{name}"
-        logger.success "Exporting ZFS pool '#{name}'"
-      end
-
+      cmd.run ADMIN + "umount -R #{target}" if target_mounted?
+      cmd.run(ADMIN + "zpool export #{name}") if zpool_imported?
       cmd.run(ADMIN + "rmdir #{target}") if Dir.exist? target
-
       logger.success 'Filesystems unmounted'
     end
 
     def firmware(_disk)
-      logger.warn 'Firmware placeholder'
+      true
     end
 
     def cleanup
+      logger.info 'Cleaning up'
+      unmount
       logger.success 'All clean!'
     end
 
@@ -268,6 +270,14 @@ module Nest
       true
     end
 
+    def ensure_target_mounted
+      unless target_mounted?
+        logger.error "#{target} is not mounted"
+        return false
+      end
+      true
+    end
+
     def labelname
       name =~ /(\d*)$/
       suffix = Regexp.last_match(1)
@@ -280,6 +290,12 @@ module Nest
 
     def boot_dir
       "#{target}/boot"
+    end
+
+    def nspawn(command)
+      cmd.run! ADMIN + 'systemd-nspawn --console=pipe -q --bind=/dev --bind=/nest ' \
+                       '--bind-ro=/usr/bin/qemu-aarch64 --bind-ro=/usr/bin/qemu-arm ' \
+                       "--capability=all --property='DeviceAllow=block-* rwm' -D #{target} -- #{command}"
     end
 
     private
@@ -303,6 +319,10 @@ module Nest
 
     def devices_ready?
       ensure_boot_device_unmounted & zpool_absent?
+    end
+
+    def target_mounted?
+      system("mountpoint -q #{target}")
     end
 
     def zpool_absent?
