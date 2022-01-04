@@ -49,7 +49,7 @@ that would be made.
 
 `nest install` is the Nest installer for hosts with a [Stage
 3](https://gitlab.james.tl/nest/stage3) image. It understands everything from
-partitioning to firmware installation and provides reasonable fault-tolerance.
+partitioning to firmware installation and provides reasonable fault tolerance.
 
 ![Nest CLI Install Screenshot](.screenshot-install.png)
 

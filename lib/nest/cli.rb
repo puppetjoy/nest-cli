@@ -64,7 +64,7 @@ module Nest
 
       desc 'create NAME', 'Clone the current boot environment to a new one'
       def create(name)
-        exit USER_ERROR unless beadm.create(name)
+        beadm.create(name) or exit USER_ERROR
       rescue StandardError => e
         logger.fatal('Error:', e)
         exit SYSTEM_ERROR
@@ -72,7 +72,7 @@ module Nest
 
       desc 'destroy NAME', 'Delete the specified boot environment'
       def destroy(name)
-        exit USER_ERROR unless beadm.destroy(name)
+        beadm.destroy(name) or exit USER_ERROR
       rescue StandardError => e
         logger.fatal('Error:', e)
         exit SYSTEM_ERROR
@@ -80,7 +80,7 @@ module Nest
 
       desc 'mount NAME', 'Mount a boot environment under /mnt'
       def mount(name)
-        exit USER_ERROR unless beadm.mount(name)
+        beadm.mount(name) or exit USER_ERROR
       rescue StandardError => e
         logger.fatal('Error:', e)
         exit SYSTEM_ERROR
@@ -89,7 +89,7 @@ module Nest
       desc 'unmount NAME', 'Unmount a boot environment under /mnt'
       map 'umount' => 'unmount'
       def unmount(name)
-        exit USER_ERROR unless beadm.unmount(name)
+        beadm.unmount(name) or exit USER_ERROR
       rescue StandardError => e
         logger.fatal('Error:', e)
         exit SYSTEM_ERROR
@@ -97,7 +97,7 @@ module Nest
 
       desc 'activate [NAME]', 'Configure and enable a boot environment for mounting at boot'
       def activate(name = nil)
-        exit USER_ERROR unless beadm.activate(name)
+        beadm.activate(name) or exit USER_ERROR
       rescue StandardError => e
         logger.fatal('Error:', e)
         exit SYSTEM_ERROR
@@ -164,11 +164,11 @@ module Nest
           stop  = options[:end]
         end
 
-        exit USER_ERROR unless installer.install(options[:disk],
-                                                 options[:encrypt],
-                                                 options[:force],
-                                                 start.to_sym,
-                                                 stop.to_sym)
+        installer.install(options[:disk],
+                          options[:encrypt],
+                          options[:force],
+                          start.to_sym,
+                          stop.to_sym) or exit USER_ERROR
       rescue StandardError => e
         logger.fatal('Error:', e)
         exit SYSTEM_ERROR
