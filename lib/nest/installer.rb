@@ -228,7 +228,7 @@ module Nest
       return false unless $DRY_RUN || ensure_target_mounted
 
       logger.info 'Installing bootloader'
-      puppet = nspawn "puppet agent --test --tags nest::base::bootloader,nest::base::dracut"
+      puppet = nspawn 'puppet agent --test --tags nest::base::bootloader,nest::base::dracut'
       unless [0, 2].include? puppet.exit_status
         logger.error 'Puppet run to install bootloader failed'
         return false
@@ -279,9 +279,7 @@ module Nest
     end
 
     def labelname
-      return $1[0..-$2.length - 1] + $2 if name.length > 8 && name =~ /^(\D{,8}).*?(\d*)$/ # rubocop:disable Style/PerlBackrefs
-
-      name
+      name.length > 8 && name =~ /^(\D{,8}).*?(\d*)$/ ? $1[0..-$2.length - 1] + $2 : name # rubocop:disable Style/PerlBackrefs
     end
 
     def target

@@ -56,16 +56,18 @@ module Nest
 
       def bootloader
         return false unless super
-        logger.info "Copy bootloader for bootable image"
+
+        logger.info 'Copy bootloader for bootable image'
         cmd.run("mkdir -p #{finish_dir}/boot") unless Dir.exist? "#{finish_dir}/boot"
         cmd.run "cp -a #{target}/boot/* #{finish_dir}/boot"
-        logger.success "Copied bootloader for bootable image"
+        logger.success 'Copied bootloader for bootable image'
       end
 
       def firmware(disk)
         logger.info "Creating bootable image #{disk}"
         cmd.run("mkdir -p #{finish_dir}/LiveOS") unless Dir.exist? "#{finish_dir}/LiveOS"
-        cmd.run("mksquashfs #{build_dir}/LiveOS/squashfs-root #{finish_dir}/LiveOS/squashfs.img -noappend", out: '/dev/stdout')
+        cmd.run("mksquashfs #{build_dir}/LiveOS/squashfs-root #{finish_dir}/LiveOS/squashfs.img -noappend",
+                out: '/dev/stdout')
         cmd.run "grub-mkrescue --modules=part_gpt -o #{disk.shellescape} #{finish_dir} -- -volid #{name.upcase}"
         logger.success "Created bootable image #{disk}"
       end
