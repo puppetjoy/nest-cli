@@ -279,9 +279,9 @@ module Nest
     end
 
     def labelname
-      name =~ /(\d*)$/
-      suffix = Regexp.last_match(1)
-      name[0..(7 - suffix.length)] + suffix
+      return $1[0..-$2.length - 1] + $2 if name.length > 8 && name =~ /^(\D{,8}).*?(\d*)$/ # rubocop:disable Style/PerlBackrefs
+
+      name
     end
 
     def target
