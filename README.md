@@ -61,7 +61,7 @@ partitioning to firmware installation and provides reasonable fault-tolerance.
 | `--force`                | Run cleanup actions (like `umount`) to try to correct unexpected system states |
 | `-s STEP`, `--step=STEP` | Only run this installation step                                                |
 | `--begin=STEP`           | The first installation step to run (default: `partition`)                      |
-| `--end=STEP`             | The last installation step to run (default: `partition`)                       |
+| `--end=STEP`             | The last installation step to run (default: `firmware`)                        |
 | `--debug`                | Print additional information, such as the input provided to commands           |
 | `--dry-run`              | Only print actions that would modify the system                                |
 
