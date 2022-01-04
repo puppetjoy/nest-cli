@@ -3,8 +3,6 @@
 This is a collection of commands written in Ruby to install, update, and
 generally administer the Nest distribution.
 
-![Nest CLI Screenshot](.screenshot.png)
-
 ## Installation
 
 [Puppet](https://gitlab.james.tl/nest/puppet/-/blob/main/manifests/base/cli.pp)
@@ -32,6 +30,8 @@ inspired by [the same concept in Solaris
 environments are used by the Nest installer to perform A/B seamless system
 updates [similar to Android](https://source.android.com/devices/tech/ota/ab).
 
+![Nest CLI Boot Environments Screenshot](.screenshot-beadm.png)
+
 | Commands                     | Description                                                  |
 |------------------------------|--------------------------------------------------------------|
 | `nest beadm activate [NAME]` | Configure and enable a boot environment for mounting at boot |
@@ -44,6 +44,38 @@ updates [similar to Android](https://source.android.com/devices/tech/ota/ab).
 
 All of these commands accept a `--dry-run` argument to only print the changes
 that would be made.
+
+### Install
+
+`nest install` is the Nest installer for hosts with a [Stage
+3](https://gitlab.james.tl/nest/stage3) image. It understands everything from
+partitioning to firmware installation and provides reasonable fault-tolerance.
+
+![Nest CLI Install Screenshot](.screenshot-install.png)
+
+| Options                  | Description                                                                    |
+|--------------------------|--------------------------------------------------------------------------------|
+| `--clean`                | Just run the cleanup step                                                      |
+| `-d DISK`, `--disk=DISK` | The disk to format and install on (*e.g.* /dev/sda or /tmp/boot.iso)           |
+| `-e`, `--encrypt`        | Use ZFS encryption                                                             |
+| `--force`                | Run cleanup actions (like `umount`) to try to correct unexpected system states |
+| `-s STEP`, `--step=STEP` | Only run this installation step                                                |
+| `--begin=STEP`           | The first installation step to run (default: `partition`)                      |
+| `--end=STEP`             | The last installation step to run (default: `partition`)                       |
+| `--debug`                | Print additional information, such as the input provided to commands           |
+| `--dry-run`              | Only print actions that would modify the system                                |
+
+The steps are self explanatory and, unless specified with `--step`, `--begin`,
+or `--end` options, run in the following order:
+
+1. `partition`
+2. `format`
+3. `mount`
+4. `copy`
+5. `bootloader`
+6. `unmount`
+7. `firmware`
+8. `cleanup` (not run by default)
 
 ## Development
 
