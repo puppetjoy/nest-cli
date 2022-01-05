@@ -70,6 +70,11 @@ module Nest
         return false
       end
 
+      unless steps[stop]
+        logger.error "'#{stop}' is not a valid step"
+        return false
+      end
+
       if encrypt && !supports_encryption
         logger.error "Platform '#{platform}' does not support encryption"
         return false
