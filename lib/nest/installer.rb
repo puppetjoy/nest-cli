@@ -106,7 +106,7 @@ module Nest
       script = StringIO.new
       script.puts 'label: gpt'
       script.puts "table-length: #{gpt_table_length}" if gpt_table_length
-      if Dir.exist? '/sys/firmware/efi'
+      if boot_fstype == 'vfat'
         script.puts "start=32768, size=512MiB, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, name=\"#{name}-boot\""
       else
         script.puts "size=30720, type=21686148-6449-6E6F-744E-656564454649, name=\"#{name}-bios\""
@@ -174,7 +174,7 @@ module Nest
       end
 
       logger.info 'Creating boot filesystem'
-      cmd.run ADMIN + "mkfs.vfat #{boot_device}"
+      cmd.run ADMIN + "mkfs.#{boot_fstype} #{boot_device}"
       logger.success 'Created boot filesystem'
     end
 
@@ -306,6 +306,10 @@ module Nest
 
     def boot_device
       "/dev/disk/by-partlabel/#{name}-boot"
+    end
+
+    def boot_fstype
+      `awk '/^PARTLABEL=#{name}-boot\\s/ { print $3 }' #{image}/etc/fstab`.chomp
     end
 
     def ensure_boot_device_unmounted
