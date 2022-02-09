@@ -52,11 +52,11 @@ module Nest
       cmd.run!(ADMIN + "zfs snapshot -r #{@current_fs}@#{snapshot}").success? or
         raise 'Failed to create snapshots for cloning'
 
-      `zfs list -H -o name,mountpoint -r #{@current_fs}`.lines.each do |line|
-        (fs, mp) = line.chomp.split("\t", 2)
+      `zfs list -H -o name,compression,mountpoint -r #{@current_fs}`.lines.each do |line|
+        (fs, compression, mp) = line.chomp.split("\t", 3)
         clone_fs = "#{@be_root}/#{name}#{fs.sub(/^#{Regexp.escape(@current_fs)}/, '')}"
-        clone_cmd = ADMIN + "zfs clone -o canmount=noauto -o mountpoint=#{mp.shellescape} " \
-                            "#{fs}@#{snapshot} #{clone_fs}"
+        clone_cmd = ADMIN + "zfs clone -o canmount=noauto -o compression=#{compression} " \
+                            "-o mountpoint=#{mp.shellescape} #{fs}@#{snapshot} #{clone_fs}"
         if cmd.run!(clone_cmd).failure?
           cmd.run! ADMIN + "zfs destroy -R #{@current_fs}@#{snapshot}"
           raise 'Failed to clone snapshot. Manual cleanup may be requried.'
