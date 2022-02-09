@@ -198,7 +198,7 @@ module Nest
         logger.info 'Importing ZFS pool'
         cmd.run ADMIN + "zpool import -f -R #{target} #{name}"
         cmd.run(ADMIN + "zfs load-key -r -L prompt #{name}/crypt", input: passphrase) if passphrase
-        cmd.run ADMIN + 'zfs mount -a' # rubocop:disable Style/StringConcatenation
+        cmd.run ADMIN + 'zfs mount -al' # rubocop:disable Style/StringConcatenation
         logger.success 'Imported ZFS pool'
       end
 
