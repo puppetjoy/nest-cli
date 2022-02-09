@@ -82,6 +82,10 @@ module Nest
 
       if steps.keys.index(start) <= steps.keys.index(:mount) && encrypt
         passphrase = prompt.mask('Encryption passphrase:')
+        if passphrase.length < 8
+          logger.error 'Passphrase must be at least 8 characters long'
+          return false
+        end
         if steps.keys.index(start) <= steps.keys.index(:format)
           if prompt.mask('Encryption passphrase (again):') != passphrase
             logger.error 'Passphrases do not match'
