@@ -297,7 +297,7 @@ module Nest
     end
 
     def nspawn(command)
-      cmd.run! ADMIN + 'systemd-nspawn --console=pipe -q --bind=/dev --bind=/nest ' \
+      cmd.run! ADMIN + 'systemd-nspawn --console=pipe -q --bind=/dev --bind=/dev/zfs --bind=/nest ' \
                        '--bind-ro=/usr/bin/qemu-aarch64 --bind-ro=/usr/bin/qemu-arm ' \
                        "--capability=all --property='DeviceAllow=block-* rwm' -D #{target} -- #{command}"
     end
