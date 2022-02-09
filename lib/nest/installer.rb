@@ -141,8 +141,9 @@ module Nest
       zroot = passphrase ? "#{name}/crypt" : name
 
       logger.info "Creating ZFS pool '#{name}'"
-      cmd.run ADMIN + 'zpool create -f -m none -o ashift=9 -O compression=lz4 ' \
-                      "-O xattr=sa -O acltype=posixacl -R #{target} #{name} #{name}"
+      cmd.run ADMIN + 'zpool create -f -m none -o ashift=9 -o autotrim=on ' \
+                      '-O compression=lz4 -O xattr=sa -O acltype=posixacl ' \
+                      "-R #{target} #{name} #{name}"
       if passphrase
         cmd.run(ADMIN + "zfs create -o encryption=aes-128-gcm -o keyformat=passphrase -o keylocation=prompt #{zroot}",
                 input: passphrase)
