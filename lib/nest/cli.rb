@@ -14,16 +14,25 @@ module Nest
     def cli_init
       $DRY_RUN = options[:dry_run]
       $LOG_DEBUG = options[:debug]
+      $QUIET = options[:quiet]
     end
 
     def cmd
       require 'tty-command'
-      $command ||= TTY::Command.new(dry_run: $DRY_RUN, uuid: false)
+      $command ||= TTY::Command.new(dry_run: $DRY_RUN, uuid: false, printer: $QUIET ? :null : :pretty)
     end
 
     def logger
+      log_level = if $LOG_DEBUG
+                    :debug
+                  elsif $QUIET
+                    :error
+                  else
+                    :info
+                  end
+
       require 'tty-logger'
-      $logger ||= TTY::Logger.new { |config| config.level = $LOG_DEBUG ? :debug : :info }
+      $logger ||= TTY::Logger.new { |config| config.level = log_level }
     end
 
     def prompt
@@ -108,17 +117,7 @@ module Nest
     class Main < Thor
       include Nest::CLI
 
-      no_commands do
-        def installer
-          cli_init
-          require_relative 'installer'
-          @installer ||= Nest::Installer.for_host(@name)
-        rescue RuntimeError => e
-          logger.error(e.message)
-          exit USER_ERROR
-        end
-      end
-
+      class_option :quiet, aliases: '-q', type: :boolean, default: false, desc: 'Hide most output'
       class_option :debug, type: :boolean, default: false, desc: 'Log debug messages'
       class_option :dry_run, type: :boolean, default: false,
                              desc: 'Only print actions that would modify the system'
@@ -151,7 +150,7 @@ module Nest
         \x5* cleanup
       LONGDESC
       def install(name)
-        @name = name
+        cli_init
 
         if options[:clean]
           start = :cleanup
@@ -164,11 +163,67 @@ module Nest
           stop  = options[:end]
         end
 
+        require_relative 'installer'
+        installer = Nest::Installer.for_host(name)
         installer.install(options[:disk],
                           options[:encrypt],
                           options[:force],
                           start.to_sym,
                           stop.to_sym) or exit USER_ERROR
+      rescue RuntimeError => e
+        logger.error(e.message)
+        exit USER_ERROR
+      rescue StandardError => e
+        logger.fatal('Error:', e)
+        exit SYSTEM_ERROR
+      end
+
+      desc 'exec [options] NAME', 'Run a shell or command in a Nest image'
+      option :boot_env, aliases: '-b', type: :boolean, desc: 'NAME is a boot environment'
+      option :mnt, aliases: '-m', type: :boolean, desc: 'NAME is a root mounted under /mnt'
+      option :host, aliases: '-h', type: :boolean, desc: 'NAME is a host image at /nest/hosts'
+      option :image, aliases: '-i', type: :boolean, desc: 'NAME is a Nest container image (e.g. stage1 or tools/pdk)'
+      option :command, aliases: '-c', banner: 'CMD', desc: 'Run CMD instead of launching an interactive shell'
+      option :extra_args, banner: 'ARGS', desc: 'Pass ARGS to the underlying runtime system'
+      option :no_home, aliases: '-H', type: :boolean, desc: 'Do not map home from the host into the shell'
+      option :no_nest, aliases: '-N', type: :boolean, desc: 'Do not map /nest into the shell'
+      option :no_portage, aliases: '-P', type: :boolean, desc: 'Do not map in Portage data'
+      option :no_x11, aliases: '-X', type: :boolean, desc: 'Don\'t allow access to host\'s X server'
+      option :no_overlay, aliases: '-O', type: :boolean, desc: 'Write changes to underlying image' \
+                                                               ' (no-op for containers)'
+      long_desc <<-LONGDESC
+        Launch a shell (tmux session) or a command in a Nest image. When the
+        image type is not specified, try them in the following order:
+
+        \x5* boot environment (-b)
+        \x5* mountpoint under /mnt (-m)
+        \x5* host image under /nest/hosts (-h)
+        \x5* Nest container image (-i)
+      LONGDESC
+      def exec(name)
+        cli_init
+
+        type = if options[:boot_env]
+                 :bootenv
+               elsif options[:mnt]
+                 :mnt
+               elsif options[:host]
+                 :host
+               elsif options[:image]
+                 :image
+               end
+
+        require_relative 'runtime'
+        runtime = Nest::Runtime.find(name, type)
+        exit runtime.exec(options[:command], extra_args: options[:extra_args],
+                                             home: !options[:no_home],
+                                             nest: !options[:no_nest],
+                                             overlay: !options[:no_overlay],
+                                             portage: !options[:no_portage],
+                                             x11: !options[:no_x11])
+      rescue RuntimeError => e
+        logger.error(e.message)
+        exit USER_ERROR
       rescue StandardError => e
         logger.fatal('Error:', e)
         exit SYSTEM_ERROR
