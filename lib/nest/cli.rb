@@ -184,7 +184,7 @@ module Nest
       option :host, aliases: '-h', type: :boolean, desc: 'NAME is a host image at /nest/hosts'
       option :image, aliases: '-i', type: :boolean, desc: 'NAME is a Nest container image (e.g. stage1 or tools/pdk)'
       option :command, aliases: '-c', banner: 'CMD', desc: 'Run CMD instead of launching an interactive shell'
-      option :extra_args, banner: 'ARGS', desc: 'Pass ARGS to the underlying runtime system'
+      option :extra_args, aliases: '-e', banner: 'ARGS', desc: 'Pass ARGS to the underlying runtime system'
       option :no_home, aliases: '-H', type: :boolean, desc: 'Do not map home from the host into the shell'
       option :no_nest, aliases: '-N', type: :boolean, desc: 'Do not map /nest into the shell'
       option :no_portage, aliases: '-P', type: :boolean, desc: 'Do not map in Portage data'
