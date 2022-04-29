@@ -188,6 +188,7 @@ module Nest
       option :no_home, aliases: '-H', type: :boolean, desc: 'Do not map home from the host into the shell'
       option :no_nest, aliases: '-N', type: :boolean, desc: 'Do not map /nest into the shell'
       option :no_portage, aliases: '-P', type: :boolean, desc: 'Do not map in Portage data'
+      option :no_ssh, aliases: '-S', type: :boolean, desc: 'Do not map in ssh-agent socket'
       option :no_x11, aliases: '-X', type: :boolean, desc: 'Don\'t allow access to host\'s X server'
       option :no_overlay, aliases: '-O', type: :boolean, desc: 'Write changes to underlying image' \
                                                                ' (no-op for containers)'
@@ -220,6 +221,7 @@ module Nest
                                              nest: !options[:no_nest],
                                              overlay: !options[:no_overlay],
                                              portage: !options[:no_portage],
+                                             ssh: !options[:no_ssh],
                                              x11: !options[:no_x11])
       rescue RuntimeError => e
         logger.error(e.message)
