@@ -42,40 +42,47 @@ module Nest
           args + %W[-v /usr/bin/qemu-#{arch}:/usr/bin/qemu-#{arch}:ro] if File.exist? "/usr/bin/qemu-#{arch}"
         end
 
-        portage_args = if options[:portage] == false
-                         []
-                       else
+        portage_args = if options[:portage]
                          [
                            '-e', 'FEATURES=-ipc-sandbox -pid-sandbox -network-sandbox -usersandbox',
                            '-v', '/etc/portage/make.conf:/etc/portage/make.conf:ro',
                            '-v', '/var/db/repos:/var/db/repos:ro'
                          ]
+                       else
+                         []
                        end
 
-        ssh_args = if options[:ssh] == false || !File.socket?(ENV['SSH_AUTH_SOCK'])
-                     []
-                   else
+        puppet_args = if options[:puppet]
+                        %w[-v /etc/puppetlabs/puppet:/etc/puppetlabs/puppet]
+                      else
+                        []
+                      end
+
+        ssh_args = if options[:ssh] && File.socket?(ENV['SSH_AUTH_SOCK'])
                      %W[-e SSH_AUTH_SOCK -v #{ENV['SSH_AUTH_SOCK']}:#{ENV['SSH_AUTH_SOCK']}:ro]
+                   else
+                     []
                    end
 
-        if options[:x11] == false || ENV['DISPLAY'].nil?
-          x11_args = []
-        else
+        if options[:x11] && !ENV['DISPLAY'].nil?
           x11_args = %w[-e DISPLAY -e GDK_DPI_SCALE -e GDK_SCALE -e QT_AUTO_SCREEN_SCALE_FACTOR -e QT_SCALE_FACTOR]
           if ENV['DISPLAY'] =~ /^:(\d+)/
             socket = "/tmp/.X11-unix/X#{Regexp.last_match(1)}"
             cmd.run 'xhost +local:root' if File.socket?(socket) && `xhost` !~ /^LOCAL:/
             x11_args += %W[-v #{socket}:#{socket}:ro]
           end
+        else
+          x11_args = []
         end
 
         podman_cmd = %w[podman run --rm -it --dns 172.22.0.1 -e TERM]
         podman_cmd += qemu_args
         podman_cmd += portage_args
+        podman_cmd += puppet_args
         podman_cmd += ssh_args
         podman_cmd += x11_args
-        podman_cmd += %W[-v #{ENV['HOME']}:/root] unless options[:home] == false
-        podman_cmd += %w[-v /nest:/nest] unless options[:nest] == false
+        podman_cmd += %W[-v #{ENV['HOME']}:/root] if options[:home]
+        podman_cmd += %w[-v /nest:/nest] if options[:nest]
         podman_cmd += options[:extra_args].shellsplit if options[:extra_args]
         podman_cmd += [image]
         podman_cmd += %W[#{ENV['SHELL']} -c #{command}] if command

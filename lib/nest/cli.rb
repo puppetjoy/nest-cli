@@ -185,6 +185,7 @@ module Nest
       option :image, aliases: '-i', type: :boolean, desc: 'NAME is a Nest container image (e.g. stage1 or tools/pdk)'
       option :command, aliases: '-c', banner: 'CMD', desc: 'Run CMD instead of launching an interactive shell'
       option :extra_args, aliases: '-e', banner: 'ARGS', desc: 'Pass ARGS to the underlying runtime system'
+      option :puppet, aliases: '-p', type: :boolean, desc: 'Use host\'s Puppet configuration'
       option :no_home, aliases: '-H', type: :boolean, desc: 'Do not map home from the host into the shell'
       option :no_nest, aliases: '-N', type: :boolean, desc: 'Do not map /nest into the shell'
       option :no_portage, aliases: '-P', type: :boolean, desc: 'Do not map in Portage data'
@@ -221,6 +222,7 @@ module Nest
                                              nest: !options[:no_nest],
                                              overlay: !options[:no_overlay],
                                              portage: !options[:no_portage],
+                                             puppet: options[:puppet],
                                              ssh: !options[:no_ssh],
                                              x11: !options[:no_x11])
       rescue RuntimeError => e
