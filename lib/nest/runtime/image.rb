@@ -33,7 +33,7 @@ module Nest
       end
 
       def exec(command = nil, options = {})
-        logger.warn 'Container storage is ephemeral' if options[:overlay] == false
+        logger.warn 'Container storage is ephemeral' unless options[:overlay]
 
         cmd.run!("podman pull #{image.shellescape}").success? or
           raise "Image '#{image}' not found"
@@ -51,12 +51,6 @@ module Nest
                        else
                          []
                        end
-
-        puppet_args = if options[:puppet]
-                        %w[-v /etc/puppetlabs/puppet:/etc/puppetlabs/puppet]
-                      else
-                        []
-                      end
 
         ssh_args = if options[:ssh] && File.socket?(ENV['SSH_AUTH_SOCK'])
                      %W[-e SSH_AUTH_SOCK -v #{ENV['SSH_AUTH_SOCK']}:#{ENV['SSH_AUTH_SOCK']}:ro]
@@ -78,11 +72,11 @@ module Nest
         podman_cmd = %w[podman run --rm -it --dns 172.22.0.1 -e TERM]
         podman_cmd += qemu_args
         podman_cmd += portage_args
-        podman_cmd += puppet_args
         podman_cmd += ssh_args
         podman_cmd += x11_args
         podman_cmd += %W[-v #{ENV['HOME']}:/root] if options[:home]
         podman_cmd += %w[-v /nest:/nest] if options[:nest]
+        podman_cmd += %w[-v /etc/puppetlabs/puppet:/etc/puppetlabs/puppet] if options[:puppet]
         podman_cmd += options[:extra_args].shellsplit if options[:extra_args]
         podman_cmd += [image]
         podman_cmd += %W[#{ENV['SHELL']} -c #{command}] if command
