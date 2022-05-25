@@ -3,6 +3,13 @@
 This is a collection of commands written in Ruby to install, update, and
 generally administer the Nest distribution.
 
+1. [Installation](#installation)
+2. [Usage](#usage)
+    * [Boot Environments](#boot-environments)
+    * [Exec](#exec)
+    * [Install](#install)
+3. [Development](#development)
+
 ## Installation
 
 [Puppet](https://gitlab.james.tl/nest/puppet/-/blob/main/manifests/base/cli.pp)
@@ -16,10 +23,11 @@ All commands provided by this program can be accessed by running `nest`. There
 are subcommands to manage ZFS boot environments, install new hosts, update
 existing hosts, and reset them back to the desired state.
 
-| Commands                | Description                  |
-|-------------------------|------------------------------|
-| `nest beadm SUBCOMMAND` | Manage ZFS boot environments |
-| `nest install NAME`     | Install a new host           |
+| Commands                | Description                   |
+|-------------------------|-------------------------------|
+| `nest beadm SUBCOMMAND` | Manage ZFS boot environments  |
+| `nest exec NAME`        | Run a command in a Nest image |
+| `nest install NAME`     | Install a new host            |
 
 ### Boot Environments
 
@@ -44,6 +52,38 @@ updates [similar to Android](https://source.android.com/devices/tech/ota/ab).
 
 All of these commands accept a `--dry-run` argument to only print the changes
 that would be made.
+
+### Exec
+
+`nest exec` launches a command or shell (tmux session) inside of a Nest image
+using either Podman or systemd-nspawn as appropriate. It provides a uniform
+interface for getting into boot environments, root disks mounted under `/mnt`,
+host images from `/nest/hosts`, and Nest container images, regardless of
+architecture. It maps in useful host data, such as Portage, by default.
+
+![Nest CLI Exec Screenshot](.screenshot-exec.png)
+
+| Options                   | Description                                                        |
+|---------------------------|--------------------------------------------------------------------|
+| `-b`, `--boot-env`        | The specified NAME is a boot environment                           |
+| `-m`, `--mnt`             | The specified NAME is a root mounted under `/mnt`                  |
+| `-h`, `--host`            | The specified NAME is a host image under `/nest/hosts`             |
+| `-i`, `--image`           | The specified NAME is a Nest container image (e.g. `stage1`)       |
+| `-c`, `--command=CMD`     | Run CMD instead of launching an interactive shell                  |
+| `-e`, `--extra-args=ARGS` | Pass ARGS to the underlying runtime system                         |
+| `-p`, `--puppet`          | Map host's Puppet configuration into container                     |
+| `-H`, `--no-home`         | Do not map homes from the host into the container                  |
+| `-N`, `--no-nest`         | Do not map `/nest` into the container                              |
+| `-P`, `--no-portage`      | Do not map Portage data into the container                         |
+| `-S`, `--no-ssh`          | Do not map ssh-agent socket into the container                     |
+| `-X`, `--no-x11`          | Do not allow access to the host's X server                         |
+| `-O`, `--no-overlay`      | Write changes to the underlying image (no-op for container images) |
+| `-q`, `--quiet`           | Hide most output (except output produced by the command or shell)  |
+| `--debug`                 | Show debug messages (there isn't any meaningful debug output yet)  |
+| `--dry-run`               | Only print actions that would modify the system                    |
+
+When the image type (`-b`, `-m`, `-h`, `-i`) isn't specified, they are tried in
+that order.
 
 ### Install
 

@@ -126,7 +126,7 @@ module Nest
 
       if (filesystems.to_a & mounted.to_a).to_h == filesystems
         logger.warn "The boot environment is already mounted at /mnt/#{name}"
-        return true
+        return :mounted
       end
 
       unless (filesystems.keys & mounted.keys).empty?
