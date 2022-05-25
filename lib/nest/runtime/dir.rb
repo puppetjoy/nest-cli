@@ -65,7 +65,7 @@ module Nest
         nspawn_cmd += options[:extra_args].shellsplit if options[:extra_args]
         nspawn_cmd += cmd_args
 
-        if $DRY_RUN
+        if $DRY_RUN || options[:pretty]
           # Use tty-command for pretty dry-run output
           cmd.run!(*nspawn_cmd).exit_status
         else

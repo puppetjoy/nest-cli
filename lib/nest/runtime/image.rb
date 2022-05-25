@@ -81,7 +81,7 @@ module Nest
         podman_cmd += [image]
         podman_cmd += %W[#{ENV['SHELL']} -c #{command}] if command
 
-        if $DRY_RUN
+        if $DRY_RUN || options[:pretty]
           # Use tty-command for pretty dry-run output
           cmd.run!(*podman_cmd).exit_status
         else

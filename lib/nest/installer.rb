@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require 'nest/runtime/dir'
 require 'stringio'
 
 module Nest
@@ -238,8 +239,8 @@ module Nest
       return false unless $DRY_RUN || ensure_target_mounted
 
       logger.info 'Installing bootloader'
-      puppet = nspawn 'puppet agent --test --tags nest::base::bootloader,nest::base::dracut'
-      unless [0, 2].include? puppet.exit_status
+      puppet_status = nspawn 'puppet agent --test --tags nest::base::bootloader,nest::base::dracut'
+      unless [0, 2].include? puppet_status
         logger.error 'Puppet run to install bootloader failed'
         return false
       end
@@ -301,9 +302,8 @@ module Nest
     end
 
     def nspawn(command)
-      cmd.run! ADMIN + 'systemd-nspawn --console=pipe -q --bind=/dev --bind=/dev/zfs --bind=/nest ' \
-                       '--bind-ro=/usr/bin/qemu-aarch64 --bind-ro=/usr/bin/qemu-arm ' \
-                       "--capability=all --property='DeviceAllow=block-* rwm' -D #{target} -- #{command}"
+      nspawn_args = '--console=pipe --bind=/dev --bind=/dev/zfs --capability=all --property="DeviceAllow=block-* rwm"'
+      Nest::Runtime::Dir.new(target).exec(command, extra_args: nspawn_args, nest: true, pretty: true)
     end
 
     private
