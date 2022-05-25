@@ -5,6 +5,7 @@ require 'shellwords'
 
 module Nest
   class Runtime
+    # Run commands in a root directory with systemd-nspawn
     class Dir < Runtime
       include Nest::CLI
 

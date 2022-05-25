@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 module Nest
+  # Abstract wrapper for running commands in images
   class Runtime
     private_class_method def self.bootenv?(name)
       require_relative 'beadm'

@@ -5,6 +5,7 @@ require 'shellwords'
 
 module Nest
   class Runtime
+    # Run commands in a container images with Podman
     class Image < Runtime
       include Nest::CLI
 

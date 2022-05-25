@@ -5,6 +5,7 @@ require_relative 'dir'
 
 module Nest
   class Runtime
+    # Run commands in a ZFS boot environment
     class BootEnv < Dir
       attr_reader :name
 
