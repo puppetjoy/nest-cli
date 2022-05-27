@@ -5,7 +5,7 @@ module Nest
     # Platform installer overrides
     class BeagleBoneBlack < Installer
       def format(passphrase = nil)
-        super(passphrase, '1536M')
+        super(passphrase, '1536M', autotrim: false)
       end
 
       def firmware(disk)
