@@ -147,6 +147,9 @@ module Nest
         raise 'Failed to mount the boot environment. Manual cleanup may be required.'
       end
 
+      cmd.run!(ADMIN + "mount --bind /boot /mnt/#{name}/boot").success? or
+        raise 'Failed to bind mount /boot'
+
       logger.success "Mounted boot environment '#{name}' at /mnt/#{name}"
       true
     end
