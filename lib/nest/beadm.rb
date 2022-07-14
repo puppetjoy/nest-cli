@@ -73,15 +73,17 @@ module Nest
         return false
       end
 
-      if name == active
-        logger.error 'Cannot destroy the boot environment set to be active next boot'
-        return false
-      end
-
       unless list.include? name
         logger.error "Boot environment '#{name}' does not exist"
         return false
       end
+
+      if name == active
+        logger.warn 'Destroying the boot environment set to be active next boot'
+        activate(current)
+      end
+
+      unmount(name)
 
       logger.info "Destroying boot environment '#{name}'"
 
@@ -177,7 +179,7 @@ module Nest
       end
 
       if (filesystems.to_a & mounted.to_a).empty?
-        logger.warn 'The boot environment is already unmounted'
+        logger.info 'The boot environment is already unmounted'
         return true
       end
 

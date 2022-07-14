@@ -63,12 +63,14 @@ module Nest
         nspawn_cmd += %W[--bind=#{ENV['HOME']} --bind=/root] if options[:home]
         nspawn_cmd += ['--bind=/nest'] if options[:nest]
         nspawn_cmd += ['--bind=/etc/puppetlabs/puppet:/etc/puppetlabs/puppet'] if options[:puppet]
+        nspawn_cmd += ['--bind=/srv'] if options[:srv]
         nspawn_cmd += options[:extra_args].shellsplit if options[:extra_args]
         nspawn_cmd += cmd_args
 
         if $DRY_RUN || options[:pretty]
           # Use tty-command for pretty dry-run output
-          cmd.run!(*nspawn_cmd).exit_status
+          runner = options[:runner] || cmd
+          runner.run!(*nspawn_cmd).exit_status
         else
           # Avoid tty-command for pty accesss
           system(*nspawn_cmd)

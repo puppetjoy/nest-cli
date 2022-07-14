@@ -22,10 +22,20 @@ module Nest
       $command ||= TTY::Command.new(dry_run: $DRY_RUN, uuid: false, printer: $QUIET ? :null : :pretty)
     end
 
-    def nspawn(target, command, home: false)
+    def forcecmd
+      require 'tty-command'
+      $force_command ||= TTY::Command.new(uuid: false, printer: :null)
+    end
+
+    def nspawn(target, command, runner: cmd, home: false, srv: false)
       require_relative 'runtime/dir'
       nspawn_args = '--console=pipe --bind=/dev --bind=/dev/zfs --capability=all --property="DeviceAllow=block-* rwm"'
-      Nest::Runtime::Dir.new(target).exec(command, extra_args: nspawn_args, nest: true, pretty: true, home: home)
+      Nest::Runtime::Dir.new(target).exec(command, runner: runner,
+                                                   extra_args: nspawn_args,
+                                                   nest: true,
+                                                   pretty: true,
+                                                   home: home,
+                                                   srv: srv)
     end
 
     def logger
@@ -242,10 +252,13 @@ module Nest
       desc 'update [options]', 'Update hosts and images'
       option :boot_env, aliases: '-b', type: :boolean, desc: 'Update alternate boot environment'
       option :dir, aliases: '-d', banner: 'DIR', type: :string, desc: 'Update image mounted at DIR'
-      option :resume, aliases: '-r', desc: 'Skip backup step'
+      option :extra_args, aliases: '-e', banner: 'ARGS', desc: 'Pass ARGS to the emerge update command'
+      option :resume, aliases: '-r', type: :boolean, desc: 'Skip backup step'
       option :step, aliases: '-s', desc: 'Only run this step'
       option :begin, banner: 'STEP', default: 'backup', desc: 'The first update step'
       option :end, banner: 'STEP', default: 'activate', desc: 'The last update step'
+      option :noop, aliases: '-n', type: :boolean, desc: 'Run destructive commands in no-op mode'
+      option :verbose, aliases: '-v', type: :boolean, desc: 'Run commands with extra verbosity'
       long_desc <<-LONGDESC
         Perform a traditional package-based update with backups and
         configuration management.
