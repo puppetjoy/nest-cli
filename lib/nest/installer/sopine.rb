@@ -9,7 +9,7 @@ module Nest
       end
 
       def format(passphrase = nil)
-        super(passphrase, '4G', autotrim: false)
+        super(passphrase, '4G')
       end
 
       def firmware(disk)

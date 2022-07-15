@@ -139,14 +139,13 @@ module Nest
       logger.success "#{disk} is partitioned"
     end
 
-    def format(passphrase = nil, swap_size = '4G', autotrim: true)
+    def format(passphrase = nil, swap_size = '4G')
       return false unless devices_ready?
 
       zroot = passphrase ? "#{name}/crypt" : name
-      autotrim_value = autotrim ? 'on' : 'off'
 
       logger.info "Creating ZFS pool '#{name}'"
-      cmd.run ADMIN + "zpool create -f -m none -o ashift=9 -o autotrim=#{autotrim_value} " \
+      cmd.run ADMIN + 'zpool create -f -m none -o ashift=9 ' \
                       '-O compression=lz4 -O xattr=sa -O acltype=posixacl ' \
                       "-R #{target} #{name} #{name}"
       if passphrase
