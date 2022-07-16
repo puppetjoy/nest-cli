@@ -71,15 +71,12 @@ module Nest
     end
 
     def config
-      run 'systemctl stop puppet-run.service puppet-run.timer' if dir == '/'
-      puppet
+      run_puppet
     end
 
     def pre
-      # Config step reenables the Puppet timer
-      run 'systemctl stop puppet-run.timer' if dir == '/'
-
       if File.exist?("#{dir}/etc/nest/pre-update.sh")
+        stop_puppet
         status = run '/etc/nest/pre-update.sh'
         raise 'Failed to run pre-update script' unless status.zero?
       end
@@ -88,6 +85,8 @@ module Nest
     end
 
     def packages
+      stop_puppet
+
       if run('eix -eu sys-apps/portage > /dev/null', runner: forcecmd).zero?
         status = run "#{emerge} -1 sys-apps/portage"
         raise 'Failed to update Portage' unless status.zero?
@@ -105,6 +104,7 @@ module Nest
 
     def post
       if File.exist?("#{dir}/etc/nest/post-update.sh")
+        stop_puppet
         status = run '/etc/nest/post-update.sh'
         raise 'Failed to run post-update script' unless status.zero?
       end
@@ -113,11 +113,9 @@ module Nest
     end
 
     def reconfig
-      puppet(kernel: true)
+      run_puppet(kernel: true)
 
-      if dir == '/'
-        run 'systemctl start puppet-run.timer'
-      elsif File.exist?('/etc/default/kexec-load') && options[:boot_env]
+      if options[:boot_env] && File.exist?('/etc/default/kexec-load')
         run "cp -a #{dir}/etc/default/kexec-load /etc/default/kexec-load && systemctl try-reload-or-restart kexec-load"
       end
 
@@ -162,10 +160,15 @@ module Nest
     end
 
     def stop_puppet
-      # TODO
+      return unless dir == '/'
+
+      run 'systemctl stop puppet-run.service puppet-run.timer' \
+        if system 'systemctl --quiet is-active puppet-run.service puppet-run.timer'
     end
 
-    def puppet(kernel: false)
+    def run_puppet(kernel: false)
+      stop_puppet
+
       env = kernel ? 'FACTER_build=kernel ' : ''
       args = options[:noop] ? ' --noop' : ''
       status = run "#{env}puppet agent --test#{args}"
