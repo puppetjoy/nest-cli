@@ -60,7 +60,7 @@ module Nest
         nspawn_cmd += portage_args
         nspawn_cmd += ssh_args
         nspawn_cmd += x11_args
-        nspawn_cmd += %W[--bind=#{::Dir.home} --bind=/root] if options[:home]
+        nspawn_cmd += %w[--bind=/home --bind=/root] if options[:home]
         nspawn_cmd += ['--bind=/nest'] if options[:nest]
         nspawn_cmd += ['--bind=/etc/puppetlabs/puppet:/etc/puppetlabs/puppet'] if options[:puppet]
         nspawn_cmd += ['--bind=/srv'] if options[:srv]
