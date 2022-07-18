@@ -22,6 +22,22 @@ module Nest
       $command ||= TTY::Command.new(dry_run: $DRY_RUN, uuid: false, printer: $QUIET ? :null : :pretty)
     end
 
+    def forcecmd
+      require 'tty-command'
+      $force_command ||= TTY::Command.new(uuid: false, printer: :null)
+    end
+
+    def nspawn(target, command, runner: cmd, home: false, srv: false)
+      require_relative 'runtime/dir'
+      nspawn_args = '--console=pipe --bind=/dev --bind=/dev/zfs --capability=all --property="DeviceAllow=block-* rwm"'
+      Nest::Runtime::Dir.new(target).exec(command, runner: runner,
+                                                   extra_args: nspawn_args,
+                                                   nest: true,
+                                                   pretty: true,
+                                                   home: home,
+                                                   srv: srv)
+    end
+
     def logger
       log_level = if $LOG_DEBUG
                     :debug
@@ -125,6 +141,61 @@ module Nest
       desc 'beadm SUBCOMMAND', 'Manage ZFS boot environments'
       subcommand 'beadm', Beadm
 
+      desc 'exec [options] NAME', 'Run a shell or command in a Nest image'
+      option :boot_env, aliases: '-b', type: :boolean, desc: 'NAME is a boot environment'
+      option :mnt, aliases: '-m', type: :boolean, desc: 'NAME is a root mounted under /mnt'
+      option :host, aliases: '-h', type: :boolean, desc: 'NAME is a host image at /nest/hosts'
+      option :image, aliases: '-i', type: :boolean, desc: 'NAME is a Nest container image (e.g. stage1 or tools/pdk)'
+      option :command, aliases: '-c', banner: 'CMD', desc: 'Run CMD instead of launching an interactive shell'
+      option :extra_args, aliases: '-e', banner: 'ARGS', desc: 'Pass ARGS to the underlying runtime system'
+      option :puppet, aliases: '-p', type: :boolean, desc: 'Use host\'s Puppet configuration'
+      option :no_home, aliases: '-H', type: :boolean, desc: 'Do not map home from the host into the shell'
+      option :no_nest, aliases: '-N', type: :boolean, desc: 'Do not map /nest into the shell'
+      option :no_portage, aliases: '-P', type: :boolean, desc: 'Do not map in Portage data'
+      option :no_ssh, aliases: '-S', type: :boolean, desc: 'Do not map in ssh-agent socket'
+      option :no_x11, aliases: '-X', type: :boolean, desc: 'Don\'t allow access to host\'s X server'
+      option :no_overlay, aliases: '-O', type: :boolean, desc: 'Write changes to underlying image ' \
+                                                               '(no-op for containers)'
+      long_desc <<-LONGDESC
+        Launch a shell (tmux session) or a command in a Nest image. When the
+        image type is not specified, try them in the following order:
+
+        \x5* boot environment (-b)
+        \x5* mountpoint under /mnt (-m)
+        \x5* host image under /nest/hosts (-h)
+        \x5* Nest container image (-i)
+      LONGDESC
+      def exec(name)
+        cli_init
+
+        type = if options[:boot_env]
+                 :bootenv
+               elsif options[:mnt]
+                 :mnt
+               elsif options[:host]
+                 :host
+               elsif options[:image]
+                 :image
+               end
+
+        require_relative 'runtime'
+        runtime = Nest::Runtime.find(name, type)
+        exit runtime.exec(options[:command], extra_args: options[:extra_args],
+                                             home: !options[:no_home],
+                                             nest: !options[:no_nest],
+                                             overlay: !options[:no_overlay],
+                                             portage: !options[:no_portage],
+                                             puppet: options[:puppet],
+                                             ssh: !options[:no_ssh],
+                                             x11: !options[:no_x11])
+      rescue RuntimeError => e
+        logger.error(e.message)
+        exit USER_ERROR
+      rescue StandardError => e
+        logger.fatal('Error:', e)
+        exit SYSTEM_ERROR
+      end
+
       desc 'install [options] NAME', 'Install a new host'
       option :clean, type: :boolean, desc: 'Just run the cleanup step'
       option :disk, aliases: '-d', required: true, desc: 'The disk to format and install on'
@@ -178,53 +249,48 @@ module Nest
         exit SYSTEM_ERROR
       end
 
-      desc 'exec [options] NAME', 'Run a shell or command in a Nest image'
-      option :boot_env, aliases: '-b', type: :boolean, desc: 'NAME is a boot environment'
-      option :mnt, aliases: '-m', type: :boolean, desc: 'NAME is a root mounted under /mnt'
-      option :host, aliases: '-h', type: :boolean, desc: 'NAME is a host image at /nest/hosts'
-      option :image, aliases: '-i', type: :boolean, desc: 'NAME is a Nest container image (e.g. stage1 or tools/pdk)'
-      option :command, aliases: '-c', banner: 'CMD', desc: 'Run CMD instead of launching an interactive shell'
-      option :extra_args, aliases: '-e', banner: 'ARGS', desc: 'Pass ARGS to the underlying runtime system'
-      option :puppet, aliases: '-p', type: :boolean, desc: 'Use host\'s Puppet configuration'
-      option :no_home, aliases: '-H', type: :boolean, desc: 'Do not map home from the host into the shell'
-      option :no_nest, aliases: '-N', type: :boolean, desc: 'Do not map /nest into the shell'
-      option :no_portage, aliases: '-P', type: :boolean, desc: 'Do not map in Portage data'
-      option :no_ssh, aliases: '-S', type: :boolean, desc: 'Do not map in ssh-agent socket'
-      option :no_x11, aliases: '-X', type: :boolean, desc: 'Don\'t allow access to host\'s X server'
-      option :no_overlay, aliases: '-O', type: :boolean, desc: 'Write changes to underlying image' \
-                                                               ' (no-op for containers)'
+      desc 'update [options]', 'Update hosts and images'
+      option :boot_env, aliases: '-b', type: :boolean, desc: 'Update alternate boot environment'
+      option :dir, aliases: '-d', banner: 'DIR', type: :string, desc: 'Update image mounted at DIR'
+      option :extra_args, aliases: '-e', banner: 'ARGS', desc: 'Pass ARGS to the emerge update command'
+      option :resume, aliases: '-r', type: :boolean, desc: 'Skip backup step'
+      option :step, aliases: '-s', desc: 'Only run this step'
+      option :begin, banner: 'STEP', default: 'backup', desc: 'The first update step'
+      option :end, banner: 'STEP', default: 'activate', desc: 'The last update step'
+      option :noop, aliases: '-n', type: :boolean, desc: 'Run destructive commands in no-op mode'
+      option :verbose, aliases: '-v', type: :boolean, desc: 'Run commands with extra verbosity'
       long_desc <<-LONGDESC
-        Launch a shell (tmux session) or a command in a Nest image. When the
-        image type is not specified, try them in the following order:
+        Perform a traditional package-based update with backups and
+        configuration management.
 
-        \x5* boot environment (-b)
-        \x5* mountpoint under /mnt (-m)
-        \x5* host image under /nest/hosts (-h)
-        \x5* Nest container image (-i)
+        \x5 STEP is one of the following points where the updater should start and stop
+
+        \x5* backup (default start)
+        \x5* mount
+        \x5* config
+        \x5* pre
+        \x5* packages
+        \x5* post
+        \x5* reconfig
+        \x5* unmount
+        \x5* activate (default stop)
       LONGDESC
-      def exec(name)
+      def update
         cli_init
 
-        type = if options[:boot_env]
-                 :bootenv
-               elsif options[:mnt]
-                 :mnt
-               elsif options[:host]
-                 :host
-               elsif options[:image]
-                 :image
-               end
+        if options[:step]
+          start = options[:step]
+          stop  = options[:step]
+        else
+          start = options[:begin] == 'backup' && options[:resume] ? :mount : options[:begin]
+          stop  = options[:end]
+        end
 
-        require_relative 'runtime'
-        runtime = Nest::Runtime.find(name, type)
-        exit runtime.exec(options[:command], extra_args: options[:extra_args],
-                                             home: !options[:no_home],
-                                             nest: !options[:no_nest],
-                                             overlay: !options[:no_overlay],
-                                             portage: !options[:no_portage],
-                                             puppet: options[:puppet],
-                                             ssh: !options[:no_ssh],
-                                             x11: !options[:no_x11])
+        require_relative 'updater'
+        updater = Nest::Updater.new
+        updater.update(start.to_sym,
+                       stop.to_sym,
+                       options) or exit USER_ERROR
       rescue RuntimeError => e
         logger.error(e.message)
         exit USER_ERROR

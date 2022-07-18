@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-require 'nest/runtime/dir'
 require 'stringio'
 
 module Nest
@@ -140,14 +139,13 @@ module Nest
       logger.success "#{disk} is partitioned"
     end
 
-    def format(passphrase = nil, swap_size = '4G', autotrim: true)
+    def format(passphrase = nil, swap_size = '4G')
       return false unless devices_ready?
 
       zroot = passphrase ? "#{name}/crypt" : name
-      autotrim_value = autotrim ? 'on' : 'off'
 
       logger.info "Creating ZFS pool '#{name}'"
-      cmd.run ADMIN + "zpool create -f -m none -o ashift=9 -o autotrim=#{autotrim_value} " \
+      cmd.run ADMIN + 'zpool create -f -m none -o ashift=9 ' \
                       '-O compression=lz4 -O xattr=sa -O acltype=posixacl ' \
                       "-R #{target} #{name} #{name}"
       if passphrase
@@ -240,7 +238,7 @@ module Nest
       return false unless $DRY_RUN || ensure_target_mounted
 
       logger.info 'Installing bootloader'
-      puppet_status = nspawn 'puppet agent --test --tags nest::base::bootloader,nest::base::dracut'
+      puppet_status = nspawn(target, 'puppet agent --test --tags nest::base::bootloader,nest::base::dracut')
       unless [0, 2].include? puppet_status
         logger.error 'Puppet run to install bootloader failed'
         return false
@@ -300,11 +298,6 @@ module Nest
 
     def boot_dir
       "#{target}/boot"
-    end
-
-    def nspawn(command)
-      nspawn_args = '--console=pipe --bind=/dev --bind=/dev/zfs --capability=all --property="DeviceAllow=block-* rwm"'
-      Nest::Runtime::Dir.new(target).exec(command, extra_args: nspawn_args, nest: true, pretty: true)
     end
 
     private
