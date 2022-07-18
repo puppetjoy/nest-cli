@@ -183,7 +183,7 @@ module Nest
 
     def run(command, runner: cmd)
       if dir == '/'
-        runner.run!(command).exit_status
+        runner.run!(ADMIN + command).exit_status
       else
         nspawn(dir, command, runner: runner, home: options[:dir].nil?, srv: options[:dir].nil?)
       end
