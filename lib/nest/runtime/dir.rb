@@ -31,15 +31,15 @@ module Nest
                          []
                        end
 
-        ssh_args = if options[:ssh] && File.socket?(ENV['SSH_AUTH_SOCK'])
-                     %W[-E SSH_AUTH_SOCK --bind-ro=#{ENV['SSH_AUTH_SOCK']}]
+        ssh_args = if options[:ssh] && File.socket?(ENV.fetch('SSH_AUTH_SOCK', ''))
+                     %W[-E SSH_AUTH_SOCK --bind-ro=#{ENV.fetch('SSH_AUTH_SOCK')}]
                    else
                      []
                    end
 
-        if options[:x11] && !ENV['DISPLAY'].nil?
+        if options[:x11] && !ENV.fetch('DISPLAY', nil).nil?
           x11_args = %w[-E DISPLAY -E GDK_DPI_SCALE -E GDK_SCALE -E QT_AUTO_SCREEN_SCALE_FACTOR -E QT_SCALE_FACTOR]
-          if ENV['DISPLAY'] =~ /^:(\d+)/
+          if ENV.fetch('DISPLAY') =~ /^:(\d+)/
             socket = "/tmp/.X11-unix/X#{Regexp.last_match(1)}"
             cmd.run 'xhost +local:root' if File.socket?(socket) && `xhost` !~ /^LOCAL:/
             x11_args += ["--bind-ro=#{socket}"]
@@ -49,9 +49,9 @@ module Nest
         end
 
         cmd_args = if command
-                     %W[-q -- #{ENV['SHELL']} -c #{command}]
+                     %W[-q -- #{ENV.fetch('SHELL', '/bin/sh')} -c #{command}]
                    else
-                     %W[-- #{ENV['SHELL']}]
+                     %W[-- #{ENV.fetch('SHELL', '/bin/sh')}]
                    end
 
         nspawn_cmd = ADMIN.shellsplit + %W[systemd-nspawn -D #{@dir} --link-journal=no --resolv-conf=replace-stub]
@@ -60,7 +60,7 @@ module Nest
         nspawn_cmd += portage_args
         nspawn_cmd += ssh_args
         nspawn_cmd += x11_args
-        nspawn_cmd += %W[--bind=#{ENV['HOME']} --bind=/root] if options[:home]
+        nspawn_cmd += %W[--bind=#{::Dir.home} --bind=/root] if options[:home]
         nspawn_cmd += ['--bind=/nest'] if options[:nest]
         nspawn_cmd += ['--bind=/etc/puppetlabs/puppet:/etc/puppetlabs/puppet'] if options[:puppet]
         nspawn_cmd += ['--bind=/srv'] if options[:srv]

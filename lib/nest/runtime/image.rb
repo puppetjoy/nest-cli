@@ -53,15 +53,15 @@ module Nest
                          []
                        end
 
-        ssh_args = if options[:ssh] && File.socket?(ENV['SSH_AUTH_SOCK'])
-                     %W[-e SSH_AUTH_SOCK -v #{ENV['SSH_AUTH_SOCK']}:#{ENV['SSH_AUTH_SOCK']}:ro]
+        ssh_args = if options[:ssh] && File.socket?(ENV.fetch('SSH_AUTH_SOCK', ''))
+                     %W[-e SSH_AUTH_SOCK -v #{ENV.fetch('SSH_AUTH_SOCK')}:#{ENV.fetch('SSH_AUTH_SOCK')}:ro]
                    else
                      []
                    end
 
-        if options[:x11] && !ENV['DISPLAY'].nil?
+        if options[:x11] && !ENV.fetch('DISPLAY', nil).nil?
           x11_args = %w[-e DISPLAY -e GDK_DPI_SCALE -e GDK_SCALE -e QT_AUTO_SCREEN_SCALE_FACTOR -e QT_SCALE_FACTOR]
-          if ENV['DISPLAY'] =~ /^:(\d+)/
+          if ENV.fetch('DISPLAY') =~ /^:(\d+)/
             socket = "/tmp/.X11-unix/X#{Regexp.last_match(1)}"
             cmd.run 'xhost +local:root' if File.socket?(socket) && `xhost` !~ /^LOCAL:/
             x11_args += %W[-v #{socket}:#{socket}:ro]
@@ -75,12 +75,12 @@ module Nest
         podman_cmd += portage_args
         podman_cmd += ssh_args
         podman_cmd += x11_args
-        podman_cmd += %W[-v #{ENV['HOME']}:/root] if options[:home]
+        podman_cmd += %W[-v #{Dir.home}:/root] if options[:home]
         podman_cmd += %w[-v /nest:/nest] if options[:nest]
         podman_cmd += %w[-v /etc/puppetlabs/puppet:/etc/puppetlabs/puppet] if options[:puppet]
         podman_cmd += options[:extra_args].shellsplit if options[:extra_args]
         podman_cmd += [image]
-        podman_cmd += %W[#{ENV['SHELL']} -c #{command}] if command
+        podman_cmd += %W[#{ENV.fetch('SHELL', '/bin/sh')} -c #{command}] if command
 
         if $DRY_RUN || options[:pretty]
           # Use tty-command for pretty dry-run output
