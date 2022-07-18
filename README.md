@@ -8,6 +8,7 @@ generally administer the Nest distribution.
     * [Boot Environments](#boot-environments)
     * [Exec](#exec)
     * [Install](#install)
+    * [Update](#update)
 3. [Development](#development)
 
 ## Installation
@@ -28,6 +29,7 @@ existing hosts, and reset them back to the desired state.
 | `nest beadm SUBCOMMAND` | Manage ZFS boot environments  |
 | `nest exec NAME`        | Run a command in a Nest image |
 | `nest install NAME`     | Install a new host            |
+| `nest update`           | Update hosts and images       |
 
 ### Boot Environments
 
@@ -116,6 +118,41 @@ or `--end` options, run in the following order:
 6. `unmount`
 7. `firmware`
 8. `cleanup` (not run by default)
+
+### Update
+
+`nest update` performs a traditional package-based update with backups and
+configuration management.
+
+![Nest CLI Update Screenshot](.screenshot-update.png)
+
+| Options                         | Description                                                          |
+|---------------------------------|----------------------------------------------------------------------|
+| `-b`, `--boot-env`              | Update the alternate boot environment                                |
+| `-d DIR`, `--dir=DIR`           | Update the image mounted at DIR                                      |
+| `-e ARGS`, `--extra-args=ARGS`  | Pass ARGS to the emerge update command                               |
+| `-r`, `--resume`                | Skip the backup step                                                 |
+| `-s STEP`, `--step=STEP`        | Only run this update step                                            |
+| `--begin=STEP`                  | The first update step to run (default: `backup`)                     |
+| `--end=STEP`                    | The last update step to run (default: `activate`)                    |
+| `-n`, `--noop`                  | Run Puppet and Portage commands in no-op mode                        |
+| `-v`, `--verbose`               | Run Portage commands with extra verbosity                            |
+| `-q`, `--quiet`                 | Hide most output (except output produced by the command or shell)    |
+| `--debug`                       | Print additional information, such as the input provided to commands |
+| `--dry-run`                     | Only print actions that would modify the system                      |
+
+The steps are self explanatory and, unless specified with `--step`, `--begin`,
+or `--end` options, run in the following order:
+
+1. `backup`
+2. `mount`
+3. `config`
+4. `pre` (if `/etc/nest/pre-update.sh` exists)
+5. `packages`
+6. `post` (if `/etc/nest/post-update.sh` exists)
+7. `reconfig`
+8. `unmount`
+9. `activate`
 
 ## Development
 
