@@ -330,7 +330,7 @@ module Nest
     end
 
     def target_mounted?
-      system("mountpoint -q #{target}")
+      system "mountpoint -q #{target}"
     end
 
     def zpool_absent?

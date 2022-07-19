@@ -81,6 +81,14 @@ module Nest
       end
     end
 
+    def ensure_target_mounted
+      if options[:boot_env] && !system("mountpoint -q #{dir}")
+        logger.error "#{dir} is not mounted"
+        return false
+      end
+      true
+    end
+
     private
 
     def boot_env

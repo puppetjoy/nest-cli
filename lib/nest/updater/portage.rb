@@ -25,10 +25,14 @@ module Nest
       protected
 
       def config
+        return false unless $DRY_RUN || ensure_target_mounted
+
         run_puppet
       end
 
       def pre
+        return false unless $DRY_RUN || ensure_target_mounted
+
         if File.exist?("#{dir}/etc/nest/pre-update.sh")
           stop_puppet
           status = run('/etc/nest/pre-update.sh', directout: true)
@@ -39,6 +43,8 @@ module Nest
       end
 
       def packages
+        return false unless $DRY_RUN || ensure_target_mounted
+
         stop_puppet
 
         if run('eix -eu sys-apps/portage > /dev/null', runner: forcecmd).zero?
@@ -57,6 +63,8 @@ module Nest
       end
 
       def post
+        return false unless $DRY_RUN || ensure_target_mounted
+
         if File.exist?("#{dir}/etc/nest/post-update.sh")
           stop_puppet
           status = run('/etc/nest/post-update.sh', directout: true)
@@ -67,6 +75,8 @@ module Nest
       end
 
       def reconfig
+        return false unless $DRY_RUN || ensure_target_mounted
+
         run_puppet(kernel: true)
 
         if options[:boot_env] && File.exist?('/etc/default/kexec-load')
