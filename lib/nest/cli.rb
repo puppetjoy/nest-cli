@@ -27,15 +27,10 @@ module Nest
       $force_command ||= TTY::Command.new(uuid: false, printer: :null)
     end
 
-    def nspawn(target, command, runner: cmd, home: false, srv: false)
+    def nspawn(target, command, options = {})
       require_relative 'runtime/dir'
       nspawn_args = '--console=pipe --bind=/dev --bind=/dev/zfs --capability=all --property="DeviceAllow=block-* rwm"'
-      Nest::Runtime::Dir.new(target).exec(command, runner: runner,
-                                                   extra_args: nspawn_args,
-                                                   nest: true,
-                                                   pretty: true,
-                                                   home: home,
-                                                   srv: srv)
+      Nest::Runtime::Dir.new(target).exec(command, options.merge({ extra_args: nspawn_args, nest: true, pretty: true }))
     end
 
     def logger

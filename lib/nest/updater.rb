@@ -91,11 +91,12 @@ module Nest
       end
     end
 
-    def run(command, runner: cmd)
+    def run(command, runner: cmd, directout: false)
       if dir == '/'
-        runner.run!(ADMIN + command).exit_status
+        cmdopts = directout ? { out: '/dev/stdout', err: '/dev/stderr' } : {}
+        runner.run!(ADMIN + command, cmdopts).exit_status
       else
-        nspawn(dir, command, runner: runner, home: options[:dir].nil?, srv: options[:dir].nil?)
+        nspawn(dir, command, runner: runner, directout: directout, home: options[:dir].nil?, srv: options[:dir].nil?)
       end
     end
   end

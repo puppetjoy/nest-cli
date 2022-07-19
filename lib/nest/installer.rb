@@ -230,7 +230,8 @@ module Nest
       return false unless $DRY_RUN || ensure_target_mounted
 
       logger.info 'Copying image'
-      cmd.run(ADMIN + "rsync -aAHX --delete --info=progress2 root@falcon:#{image}/ #{target}", out: '/dev/stdout')
+      cmd.run(ADMIN + "rsync -aAHX --delete --info=progress2 root@falcon:#{image}/ #{target}",
+              out: '/dev/stdout', err: '/dev/stderr')
       logger.success 'Copied image'
     end
 
@@ -238,7 +239,8 @@ module Nest
       return false unless $DRY_RUN || ensure_target_mounted
 
       logger.info 'Installing bootloader'
-      puppet_status = nspawn(target, 'puppet agent --test --tags nest::base::bootloader,nest::base::dracut')
+      puppet_status = nspawn(target, 'puppet agent --test --tags nest::base::bootloader,nest::base::dracut',
+                             directout: true)
       unless [0, 2].include? puppet_status
         logger.error 'Puppet run to install bootloader failed'
         return false

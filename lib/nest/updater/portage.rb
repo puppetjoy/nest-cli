@@ -31,7 +31,7 @@ module Nest
       def pre
         if File.exist?("#{dir}/etc/nest/pre-update.sh")
           stop_puppet
-          status = run '/etc/nest/pre-update.sh'
+          status = run('/etc/nest/pre-update.sh', directout: true)
           raise 'Failed to run pre-update script' unless status.zero?
         end
 
@@ -59,7 +59,7 @@ module Nest
       def post
         if File.exist?("#{dir}/etc/nest/post-update.sh")
           stop_puppet
-          status = run '/etc/nest/post-update.sh'
+          status = run('/etc/nest/post-update.sh', directout: true)
           raise 'Failed to run post-update script' unless status.zero?
         end
 
