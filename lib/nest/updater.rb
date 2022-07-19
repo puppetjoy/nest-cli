@@ -8,9 +8,10 @@ module Nest
   class Updater
     include Nest::CLI
 
-    attr_reader :beadm, :options, :dir
+    attr_reader :steps, :beadm, :options, :dir
 
-    def initialize
+    def initialize(steps)
+      @steps = steps
       @beadm = Nest::Beadm.new
     end
 
@@ -24,18 +25,6 @@ module Nest
              else
                '/'
              end
-
-      steps = {
-        backup: -> { backup },
-        mount: -> { mount },
-        config: -> { config },
-        pre: -> { pre },
-        packages: -> { packages },
-        post: -> { post },
-        reconfig: -> { reconfig },
-        unmount: -> { unmount },
-        activate: -> { activate }
-      }
 
       unless steps[start]
         logger.error "'#{start}' is not a valid step"
@@ -55,6 +44,8 @@ module Nest
       steps.values[(steps.keys.index start)..(steps.keys.index stop)].drop_while(&:call).empty?
     end
 
+    protected
+
     def backup
       beadm.destroy(boot_env) if beadm.list.include?(boot_env)
       beadm.create(boot_env) || $DRY_RUN
@@ -68,58 +59,6 @@ module Nest
       else
         beadm.mount(boot_env)
       end
-    end
-
-    def config
-      run_puppet
-    end
-
-    def pre
-      if File.exist?("#{dir}/etc/nest/pre-update.sh")
-        stop_puppet
-        status = run '/etc/nest/pre-update.sh'
-        raise 'Failed to run pre-update script' unless status.zero?
-      end
-
-      true
-    end
-
-    def packages
-      stop_puppet
-
-      if run('eix -eu sys-apps/portage > /dev/null', runner: forcecmd).zero?
-        status = run "#{emerge} -1 sys-apps/portage"
-        raise 'Failed to update Portage' unless status.zero?
-      end
-
-      extra_args = options[:extra_args] ? " #{options[:extra_args]}" : ''
-      status = run "#{emerge} -DuN --with-bdeps=y --keep-going#{extra_args} @world"
-      raise 'Failed to update system' unless status.zero?
-
-      status = run "#{emerge} --depclean"
-      raise 'Failed to remove unnecessary packages' unless status.zero?
-
-      true
-    end
-
-    def post
-      if File.exist?("#{dir}/etc/nest/post-update.sh")
-        stop_puppet
-        status = run '/etc/nest/post-update.sh'
-        raise 'Failed to run post-update script' unless status.zero?
-      end
-
-      true
-    end
-
-    def reconfig
-      run_puppet(kernel: true)
-
-      if options[:boot_env] && File.exist?('/etc/default/kexec-load')
-        run "cp -a #{dir}/etc/default/kexec-load /etc/default/kexec-load && systemctl try-reload-or-restart kexec-load"
-      end
-
-      true
     end
 
     def unmount
@@ -150,35 +89,6 @@ module Nest
       else
         "#{beadm.current}.old"
       end
-    end
-
-    def emerge
-      command = 'emerge'
-      command += ' -p' if options[:noop]
-      command += ' -v' if options[:verbose]
-      command
-    end
-
-    def stop_puppet
-      return unless dir == '/'
-
-      run 'systemctl stop puppet-run.service puppet-run.timer' \
-        if system 'systemctl --quiet is-active puppet-run.service puppet-run.timer'
-    end
-
-    def run_puppet(kernel: false)
-      stop_puppet
-
-      env = kernel ? 'FACTER_build=kernel ' : ''
-      args = options[:noop] ? ' --noop' : ''
-      status = run "#{env}puppet agent --test#{args}"
-      raise 'Failed to configure system with Puppet' unless [0, 2].include?(status)
-
-      # Rerun to ensure idempotence
-      status = run 'puppet agent --test' if status == 2
-      raise 'Failed to configure system with Puppet' unless status.zero?
-
-      true
     end
 
     def run(command, runner: cmd)

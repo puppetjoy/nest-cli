@@ -286,8 +286,63 @@ module Nest
           stop  = options[:end]
         end
 
-        require_relative 'updater'
-        updater = Nest::Updater.new
+        require_relative 'updater/portage'
+        updater = Nest::Updater::Portage.new
+        updater.update(start.to_sym,
+                       stop.to_sym,
+                       options) or exit USER_ERROR
+      rescue RuntimeError => e
+        logger.error(e.message)
+        exit USER_ERROR
+      rescue StandardError => e
+        logger.fatal('Error:', e)
+        exit SYSTEM_ERROR
+      end
+
+      desc 'reset [options]', 'Reset hosts from Stage 3'
+      option :kernel, aliases: '-k', type: :boolean, desc: 'Just update the kernel'
+      option :firmware, aliases: '-f', type: :boolean, desc: 'Just update the firmware'
+      option :resume, aliases: '-r', type: :boolean, desc: 'Skip backup step'
+      option :step, aliases: '-s', desc: 'Only run this step'
+      option :begin, banner: 'STEP', default: 'backup', desc: 'The first update step'
+      option :end, banner: 'STEP', default: 'activate', desc: 'The last update step'
+      option :noop, aliases: '-n', type: :boolean, desc: 'Run destructive commands in no-op mode'
+      option :verbose, aliases: '-v', type: :boolean, desc: 'Run commands with extra verbosity'
+      long_desc <<-LONGDESC
+        Reset this host from its Stage 3 image.
+
+        \x5 STEP is one of the following points where the reset should start and stop
+
+        \x5* backup (default start)
+        \x5* mount
+        \x5* sync
+        \x5* kernel
+        \x5* unmount
+        \x5* activate (default stop)
+        \x5* firmware
+      LONGDESC
+      def reset
+        cli_init
+
+        if options[:kernel] && options[:firmware]
+          start = :kernel
+          stop  = :firmware
+        elsif options[:kernel]
+          start = :kernel
+          stop  = :kernel
+        elsif options[:firmware]
+          start = :firmware
+          stop  = :firmware
+        elsif options[:step]
+          start = options[:step]
+          stop  = options[:step]
+        else
+          start = options[:begin] == 'backup' && options[:resume] ? :mount : options[:begin]
+          stop  = options[:end]
+        end
+
+        require_relative 'updater/rsync'
+        updater = Nest::Updater::Rsync.new
         updater.update(start.to_sym,
                        stop.to_sym,
                        options) or exit USER_ERROR
