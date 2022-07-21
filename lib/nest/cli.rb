@@ -303,6 +303,7 @@ module Nest
       option :end, banner: 'STEP', default: 'activate', desc: 'The last update step'
       option :noop, aliases: '-n', type: :boolean, desc: 'Run destructive commands in no-op mode'
       option :verbose, aliases: '-v', type: :boolean, desc: 'Run commands with extra verbosity'
+      option :test, aliases: '-t', type: :boolean, desc: 'Test rsync with checksums instead of times'
       long_desc <<-LONGDESC
         Reset this host from its Stage 3 image.
 
@@ -333,7 +334,7 @@ module Nest
           stop  = options[:step]
         else
           start = options[:begin] == 'backup' && options[:resume] ? :mount : options[:begin]
-          stop  = options[:end]
+          stop  = options[:end] == 'activate' && options[:test] ? :sync : options[:end]
         end
 
         require_relative 'updater/rsync'
