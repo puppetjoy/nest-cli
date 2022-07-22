@@ -2,6 +2,7 @@
 
 require_relative '../updater'
 require_relative '../installer'
+require 'shellwords'
 require 'socket'
 
 module Nest
@@ -36,9 +37,14 @@ module Nest
         return false unless $DRY_RUN || ensure_target_mounted
 
         test_filter = options[:test] ? '--filter=\'merge /etc/nest/reset-test-filter.rules\' ' : ''
-        cmd.run(ADMIN + "#{rsync} --delete --filter='merge /etc/nest/reset-filter.rules' #{test_filter}" \
-                        "--itemize-changes --progress root@falcon:#{installer.image}/ #{dir}",
-                out: '/dev/stdout', err: '/dev/stderr')
+        main_filter = '--filter=\'merge /etc/nest/reset-filter.rules\' '
+        keep_awk    = '/\/\.keep_/ { sub(/\.keep_\S*/, "**"); print "P", $2 }'
+        keep_cmd    = "awk #{keep_awk.shellescape} #{installer.image}/var/db/pkg/*/*/CONTENTS | sort -u"
+        keep_filter = "--filter=merge\\ <(#{keep_cmd})"
+        filters     = "#{test_filter}#{main_filter}#{keep_filter}"
+        rsync_cmd   = "#{rsync} --delete #{filters} --itemize-changes --progress root@falcon:#{installer.image}/ #{dir}"
+
+        cmd.run(ADMIN + "zsh -c #{rsync_cmd.shellescape}", out: '/dev/stdout', err: '/dev/stderr')
       end
 
       def kernel
