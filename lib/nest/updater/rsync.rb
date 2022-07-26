@@ -71,18 +71,21 @@ module Nest
 
       def kernel_src
         current_sources = File.basename Dir["#{installer.image}/usr/src/linux-*"].first
+        dest = File.join(dir, '/usr/src')
         cmd.run(ADMIN + "#{rsync} --delete -f 'R #{current_sources}/**' -f 'P **' " \
-                        "--itemize-changes --progress root@falcon:'#{installer.image}/usr/src/linux*' #{dir}usr/src",
+                        "--itemize-changes --progress root@falcon:'#{installer.image}/usr/src/linux*' #{dest}",
                 out: '/dev/stdout', err: '/dev/stderr')
       end
 
       def kernel_modules
         current_modules = File.basename Dir["#{installer.image}/lib/modules/*"].first
+        dest = File.join(dir, '/lib/modules')
         cmd.run(ADMIN + "#{rsync} --delete -f 'R #{current_modules}/**' -f 'P **' " \
-                        "--itemize-changes --progress root@falcon:#{installer.image}/lib/modules/ #{dir}lib/modules",
+                        "--itemize-changes --progress root@falcon:#{installer.image}/lib/modules/ #{dest}",
                 out: '/dev/stdout', err: '/dev/stderr')
       end
 
+      # XXX handle kexec-load
       def kernel_install
         args = options[:noop] ? ' --noop' : ''
         status = run('FACTER_force_kernel_install=1 puppet agent --test ' \
