@@ -78,11 +78,7 @@ module Nest
         return false unless $DRY_RUN || ensure_target_mounted
 
         run_puppet(kernel: true)
-
-        if options[:boot_env] && File.exist?('/etc/default/kexec-load')
-          run "cp -a #{dir}/etc/default/kexec-load /etc/default/kexec-load && " \
-              'systemctl try-reload-or-restart kexec-load'
-        end
+        reload_kexec
 
         true
       end

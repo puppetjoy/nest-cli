@@ -89,6 +89,13 @@ module Nest
       true
     end
 
+    def reload_kexec
+      return unless options[:boot_env] && File.exist?('/etc/default/kexec-load')
+
+      cmd.run "#{ADMIN}cp -a #{dir}/etc/default/kexec-load /etc/default/kexec-load && " \
+              "#{ADMIN}systemctl try-reload-or-restart kexec-load"
+    end
+
     private
 
     def boot_env
