@@ -32,7 +32,7 @@ module Nest
         logger.success 'Created live image structure'
       end
 
-      def format
+      def format(_options = {})
         return false unless ensure_image_unmounted
 
         logger.info 'Formatting live image'

@@ -199,6 +199,7 @@ module Nest
       option :step, aliases: '-s', desc: 'Only run this step'
       option :begin, banner: 'STEP', default: 'partition', desc: 'The first installation step'
       option :end, banner: 'STEP', default: 'firmware', desc: 'The last installation step'
+      option :ashift, banner: 'SIZE', type: :numeric, default: 9, desc: 'Set the zpool ashift value'
       long_desc <<-LONGDESC
         Install a new host called NAME onto DISK starting at STEP where:
 
@@ -235,7 +236,8 @@ module Nest
                           options[:encrypt],
                           options[:force],
                           start.to_sym,
-                          stop.to_sym) or exit USER_ERROR
+                          stop.to_sym,
+                          options[:ashift]) or exit USER_ERROR
       rescue RuntimeError => e
         logger.error(e.message)
         exit USER_ERROR

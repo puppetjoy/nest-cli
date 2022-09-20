@@ -51,12 +51,12 @@ module Nest
       @role = role
     end
 
-    def install(disk, encrypt, force, start = :partition, stop = :firmware, supports_encryption: true)
+    def install(disk, encrypt, force, start = :partition, stop = :firmware, ashift = 9, supports_encryption: true)
       @force = force
 
       steps = {
         partition: -> { partition(disk) },
-        format: -> { format },
+        format: -> { format(ashift: ashift) },
         mount: -> { mount },
         copy: -> { copy },
         bootloader: -> { bootloader },
@@ -91,7 +91,7 @@ module Nest
             logger.error 'Passphrases do not match'
             return false
           end
-          steps[:format] = -> { format(passphrase) }
+          steps[:format] = -> { format(passphrase: passphrase, ashift: ashift) }
         end
         steps[:mount] = -> { mount(passphrase) }
       end
@@ -139,13 +139,13 @@ module Nest
       logger.success "#{disk} is partitioned"
     end
 
-    def format(passphrase = nil, swap_size = '4G')
+    def format(passphrase: nil, swap_size: '4G', ashift: 9)
       return false unless devices_ready?
 
       zroot = passphrase ? "#{name}/crypt" : name
 
       logger.info "Creating ZFS pool '#{name}'"
-      cmd.run ADMIN + 'zpool create -f -m none -o ashift=9 ' \
+      cmd.run ADMIN + "zpool create -f -m none -o ashift=#{ashift} " \
                       '-O compression=lz4 -O xattr=sa -O acltype=posixacl ' \
                       "-R #{target} #{name} #{name}"
       if passphrase

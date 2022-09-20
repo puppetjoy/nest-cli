@@ -8,10 +8,6 @@ module Nest
         super(disk, 56)
       end
 
-      def format(passphrase = nil)
-        super(passphrase, '4G')
-      end
-
       def firmware(disk)
         logger.info "Installing firmware to #{disk}"
         cmd.run ADMIN + "dd if=#{image}/usr/src/u-boot/u-boot-sunxi-with-spl.bin of=#{disk} seek=16"
