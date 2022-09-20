@@ -65,24 +65,24 @@ architecture. It maps in useful host data, such as Portage, by default.
 
 ![Nest CLI Exec Screenshot](.screenshot-exec.png)
 
-| Options                   | Description                                                        |
-|---------------------------|--------------------------------------------------------------------|
-| `-b`, `--boot-env`        | The specified NAME is a boot environment                           |
-| `-m`, `--mnt`             | The specified NAME is a root mounted under `/mnt`                  |
-| `-h`, `--host`            | The specified NAME is a host image under `/nest/hosts`             |
-| `-i`, `--image`           | The specified NAME is a Nest container image (e.g. `stage1`)       |
-| `-c`, `--command=CMD`     | Run CMD instead of launching an interactive shell                  |
-| `-e`, `--extra-args=ARGS` | Pass ARGS to the underlying runtime system                         |
-| `-p`, `--puppet`          | Map host's Puppet configuration into container                     |
-| `-H`, `--no-home`         | Do not map homes from the host into the container                  |
-| `-N`, `--no-nest`         | Do not map `/nest` into the container                              |
-| `-P`, `--no-portage`      | Do not map Portage data into the container                         |
-| `-S`, `--no-ssh`          | Do not map ssh-agent socket into the container                     |
-| `-X`, `--no-x11`          | Do not allow access to the host's X server                         |
-| `-O`, `--no-overlay`      | Write changes to the underlying image (no-op for container images) |
-| `-q`, `--quiet`           | Hide most output (except output produced by the command or shell)  |
-| `--debug`                 | Show debug messages (there isn't any meaningful debug output yet)  |
-| `--dry-run`               | Only print actions that would modify the system                    |
+| Options                   | Description                                                                              |
+|---------------------------|------------------------------------------------------------------------------------------|
+| `-b`, `--boot-env`        | The specified NAME is a boot environment                                                 |
+| `-m`, `--mnt`             | The specified NAME is a root mounted under `/mnt`                                        |
+| `-h`, `--host`            | The specified NAME is a host image under `/nest/hosts`                                   |
+| `-i`, `--image`           | The specified NAME is a Nest container image (e.g. `stage1`)                             |
+| `-c`, `--command=CMD`     | Run CMD instead of launching an interactive shell                                        |
+| `-e`, `--extra-args=ARGS` | Pass ARGS to the underlying runtime system                                               |
+| `-p`, `--puppet`          | Map host's Puppet configuration into container                                           |
+| `-H`, `--no-home`         | Do not map homes from the host into the container                                        |
+| `-N`, `--no-nest`         | Do not map `/nest` into the container                                                    |
+| `-P`, `--no-portage`      | Do not map Portage data into the container                                               |
+| `-S`, `--no-ssh`          | Do not map ssh-agent socket into the container                                           |
+| `-X`, `--no-x11`          | Do not allow access to the host's X server                                               |
+| `-O`, `--no-overlay`      | Write changes to the underlying image (no-op for boot environments and container images) |
+| `-q`, `--quiet`           | Hide most output (except output produced by the command or shell)                        |
+| `--debug`                 | Show debug messages (there isn't any meaningful debug output yet)                        |
+| `--dry-run`               | Only print actions that would modify the system                                          |
 
 When the image type (`-b`, `-m`, `-h`, `-i`) isn't specified, they are tried in
 that order.

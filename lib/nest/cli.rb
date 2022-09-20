@@ -150,7 +150,7 @@ module Nest
       option :no_ssh, aliases: '-S', type: :boolean, desc: 'Do not map in ssh-agent socket'
       option :no_x11, aliases: '-X', type: :boolean, desc: 'Don\'t allow access to host\'s X server'
       option :no_overlay, aliases: '-O', type: :boolean, desc: 'Write changes to underlying image ' \
-                                                               '(no-op for containers)'
+                                                               '(no-op for boot environments and containers)'
       long_desc <<-LONGDESC
         Launch a shell (tmux session) or a command in a Nest image. When the
         image type is not specified, try them in the following order:
