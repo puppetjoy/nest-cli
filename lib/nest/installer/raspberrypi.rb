@@ -4,8 +4,8 @@ module Nest
   class Installer
     # Platform installer overrides
     class RaspberryPi < Installer
-      def format(passphrase = nil)
-        super(passphrase, '8G')
+      def format(options = {})
+        super(options.merge(swap_size: '8G'))
       end
     end
   end

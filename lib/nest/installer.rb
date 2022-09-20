@@ -51,12 +51,14 @@ module Nest
       @role = role
     end
 
-    def install(disk, encrypt, force, start = :partition, stop = :firmware, supports_encryption: true)
+    def install(disk, encrypt, force, start = :partition, stop = :firmware, ashift = 9, supports_encryption: true)
       @force = force
+
+      format_options = { ashift: ashift, fscache_size: fscache_size(disk) }
 
       steps = {
         partition: -> { partition(disk) },
-        format: -> { format },
+        format: -> { format(format_options) },
         mount: -> { mount },
         copy: -> { copy },
         bootloader: -> { bootloader },
@@ -91,7 +93,7 @@ module Nest
             logger.error 'Passphrases do not match'
             return false
           end
-          steps[:format] = -> { format(passphrase) }
+          steps[:format] = -> { format(format_options.merge(passphrase: passphrase)) }
         end
         steps[:mount] = -> { mount(passphrase) }
       end
@@ -139,13 +141,13 @@ module Nest
       logger.success "#{disk} is partitioned"
     end
 
-    def format(passphrase = nil, swap_size = '4G')
+    def format(ashift: 9, passphrase: nil, fscache_size: '2G', swap_size: '4G')
       return false unless devices_ready?
 
       zroot = passphrase ? "#{name}/crypt" : name
 
       logger.info "Creating ZFS pool '#{name}'"
-      cmd.run ADMIN + 'zpool create -f -m none -o ashift=9 ' \
+      cmd.run ADMIN + "zpool create -f -m none -o ashift=#{ashift} " \
                       '-O compression=lz4 -O xattr=sa -O acltype=posixacl ' \
                       "-R #{target} #{name} #{name}"
       if passphrase
@@ -170,7 +172,7 @@ module Nest
 
       unless File.open("#{image}/etc/fstab").grep(/#{labelname}-fscache/).empty?
         logger.info 'Creating fscache'
-        cmd.run ADMIN + "zfs create -V 2G #{zroot}/fscache"
+        cmd.run ADMIN + "zfs create -V #{fscache_size} #{zroot}/fscache"
         cmd.run 'udevadm settle'
         cmd.run ADMIN + "mkfs.ext4 -q -L #{labelname}-fscache /dev/zvol/#{zroot}/fscache"
         cmd.run ADMIN + "tune2fs -o discard /dev/zvol/#{zroot}/fscache"
@@ -230,7 +232,8 @@ module Nest
       return false unless $DRY_RUN || ensure_target_mounted
 
       logger.info 'Copying image'
-      cmd.run(ADMIN + "rsync -aAHX --delete --info=progress2 root@falcon:#{image}/ #{target}", out: '/dev/stdout')
+      cmd.run(ADMIN + "rsync -aAHX --delete --info=progress2 root@falcon:#{image}/ #{target}",
+              out: '/dev/stdout', err: '/dev/stderr')
       logger.success 'Copied image'
     end
 
@@ -238,7 +241,8 @@ module Nest
       return false unless $DRY_RUN || ensure_target_mounted
 
       logger.info 'Installing bootloader'
-      puppet_status = nspawn(target, 'puppet agent --test --tags nest::base::bootloader,nest::base::dracut')
+      puppet_status = nspawn(target, 'puppet agent --test --tags nest::base::bootloader,nest::base::dracut',
+                             directout: true)
       unless [0, 2].include? puppet_status
         logger.error 'Puppet run to install bootloader failed'
         return false
@@ -288,6 +292,19 @@ module Nest
       true
     end
 
+    def fscache_size(disk)
+      size = `lsblk -bdno SIZE #{disk} 2>/dev/null`.to_i
+      if size.positive?
+        #        size < 5    => 1G
+        #   5 <= size < 50   => 2G
+        #  50 <= size < 500  => 4G
+        # 500 <= size < 5000 => 8G
+        "#{2**((size >> 29).to_s.length - 1)}G"
+      else
+        '2G'
+      end
+    end
+
     def labelname
       name.length > 8 && name =~ /^(\D{,8}).*?(\d*)$/ ? $1[0..-$2.length - 1] + $2 : name # rubocop:disable Style/PerlBackrefs
     end
@@ -328,7 +345,7 @@ module Nest
     end
 
     def target_mounted?
-      system("mountpoint -q #{target}")
+      system "mountpoint -q #{target}"
     end
 
     def zpool_absent?

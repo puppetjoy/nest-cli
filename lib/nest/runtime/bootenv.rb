@@ -17,7 +17,7 @@ module Nest
 
       def exec(command = nil, options = {})
         premounted = @beadm.mount(name) == :mounted
-        exit_status = super(command, options)
+        exit_status = super(command, options.merge(overlay: false))
         @beadm.unmount(name) unless premounted
         exit_status
       end

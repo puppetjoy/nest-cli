@@ -9,6 +9,7 @@ generally administer the Nest distribution.
     * [Exec](#exec)
     * [Install](#install)
     * [Update](#update)
+    * [Reset](#reset)
 3. [Development](#development)
 
 ## Installation
@@ -65,24 +66,24 @@ architecture. It maps in useful host data, such as Portage, by default.
 
 ![Nest CLI Exec Screenshot](.screenshot-exec.png)
 
-| Options                   | Description                                                        |
-|---------------------------|--------------------------------------------------------------------|
-| `-b`, `--boot-env`        | The specified NAME is a boot environment                           |
-| `-m`, `--mnt`             | The specified NAME is a root mounted under `/mnt`                  |
-| `-h`, `--host`            | The specified NAME is a host image under `/nest/hosts`             |
-| `-i`, `--image`           | The specified NAME is a Nest container image (e.g. `stage1`)       |
-| `-c`, `--command=CMD`     | Run CMD instead of launching an interactive shell                  |
-| `-e`, `--extra-args=ARGS` | Pass ARGS to the underlying runtime system                         |
-| `-p`, `--puppet`          | Map host's Puppet configuration into container                     |
-| `-H`, `--no-home`         | Do not map homes from the host into the container                  |
-| `-N`, `--no-nest`         | Do not map `/nest` into the container                              |
-| `-P`, `--no-portage`      | Do not map Portage data into the container                         |
-| `-S`, `--no-ssh`          | Do not map ssh-agent socket into the container                     |
-| `-X`, `--no-x11`          | Do not allow access to the host's X server                         |
-| `-O`, `--no-overlay`      | Write changes to the underlying image (no-op for container images) |
-| `-q`, `--quiet`           | Hide most output (except output produced by the command or shell)  |
-| `--debug`                 | Show debug messages (there isn't any meaningful debug output yet)  |
-| `--dry-run`               | Only print actions that would modify the system                    |
+| Options                   | Description                                                                              |
+|---------------------------|------------------------------------------------------------------------------------------|
+| `-b`, `--boot-env`        | The specified NAME is a boot environment                                                 |
+| `-m`, `--mnt`             | The specified NAME is a root mounted under `/mnt`                                        |
+| `-h`, `--host`            | The specified NAME is a host image under `/nest/hosts`                                   |
+| `-i`, `--image`           | The specified NAME is a Nest container image (e.g. `stage1`)                             |
+| `-c`, `--command=CMD`     | Run CMD instead of launching an interactive shell                                        |
+| `-e`, `--extra-args=ARGS` | Pass ARGS to the underlying runtime system                                               |
+| `-p`, `--puppet`          | Map host's Puppet configuration into container                                           |
+| `-H`, `--no-home`         | Do not map homes from the host into the container                                        |
+| `-N`, `--no-nest`         | Do not map `/nest` into the container                                                    |
+| `-P`, `--no-portage`      | Do not map Portage data into the container                                               |
+| `-S`, `--no-ssh`          | Do not map ssh-agent socket into the container                                           |
+| `-X`, `--no-x11`          | Do not allow access to the host's X server                                               |
+| `-O`, `--no-overlay`      | Write changes to the underlying image (no-op for boot environments and container images) |
+| `-q`, `--quiet`           | Hide most output (except output produced by the command or shell)                        |
+| `--debug`                 | Show debug messages (there isn't any meaningful debug output yet)                        |
+| `--dry-run`               | Only print actions that would modify the system                                          |
 
 When the image type (`-b`, `-m`, `-h`, `-i`) isn't specified, they are tried in
 that order.
@@ -104,6 +105,7 @@ partitioning to firmware installation and provides reasonable fault tolerance.
 | `-s STEP`, `--step=STEP` | Only run this installation step                                                |
 | `--begin=STEP`           | The first installation step to run (default: `partition`)                      |
 | `--end=STEP`             | The last installation step to run (default: `firmware`)                        |
+| `--ashift=SIZE`          | Set the zpool ashift value (default: 9)                                        |
 | `--debug`                | Print additional information, such as the input provided to commands           |
 | `--dry-run`              | Only print actions that would modify the system                                |
 
@@ -153,6 +155,36 @@ or `--end` options, run in the following order:
 7. `reconfig`
 8. `unmount`
 9. `activate`
+
+### Reset
+
+`nest reset` resets this host from its Stage 3 image.
+
+| Options                         | Description                                                          |
+|---------------------------------|----------------------------------------------------------------------|
+| `-k`, `--kernel`                | Just update the kernel                                               |
+| `-f`, `--firmware`              | Just update the firmware                                             |
+| `-r`, `--resume`                | Skip the backup step                                                 |
+| `-s STEP`, `--step=STEP`        | Only run this update step                                            |
+| `--begin=STEP`                  | The first update step to run (default: `backup`)                     |
+| `--end=STEP`                    | The last update step to run (default: `activate`)                    |
+| `-n`, `--noop`                  | Run Puppet and Portage commands in no-op mode                        |
+| `-v`, `--verbose`               | Run Portage commands with extra verbosity                            |
+| `-q`, `--quiet`                 | Hide most output (except output produced by the command or shell)    |
+| `--debug`                       | Print additional information, such as the input provided to commands |
+| `--dry-run`                     | Only print actions that would modify the system                      |
+| `-t`, `--test`                  | Test rsync with checksums instead of times                           |
+
+The steps are self explanatory and, unless specified with `--step`, `--begin`,
+or `--end` options, run in the following order:
+
+1. `backup`
+2. `mount`
+3. `sync`
+5. `kernel`
+8. `unmount`
+9. `activate`
+10. `firmware` (not run by default)
 
 ## Development
 
