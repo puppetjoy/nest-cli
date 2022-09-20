@@ -9,6 +9,7 @@ generally administer the Nest distribution.
     * [Exec](#exec)
     * [Install](#install)
     * [Update](#update)
+    * [Reset](#reset)
 3. [Development](#development)
 
 ## Installation
@@ -154,6 +155,36 @@ or `--end` options, run in the following order:
 7. `reconfig`
 8. `unmount`
 9. `activate`
+
+### Reset
+
+`nest reset` resets this host from its Stage 3 image.
+
+| Options                         | Description                                                          |
+|---------------------------------|----------------------------------------------------------------------|
+| `-k`, `--kernel`                | Just update the kernel                                               |
+| `-f`, `--firmware`              | Just update the firmware                                             |
+| `-r`, `--resume`                | Skip the backup step                                                 |
+| `-s STEP`, `--step=STEP`        | Only run this update step                                            |
+| `--begin=STEP`                  | The first update step to run (default: `backup`)                     |
+| `--end=STEP`                    | The last update step to run (default: `activate`)                    |
+| `-n`, `--noop`                  | Run Puppet and Portage commands in no-op mode                        |
+| `-v`, `--verbose`               | Run Portage commands with extra verbosity                            |
+| `-q`, `--quiet`                 | Hide most output (except output produced by the command or shell)    |
+| `--debug`                       | Print additional information, such as the input provided to commands |
+| `--dry-run`                     | Only print actions that would modify the system                      |
+| `-t`, `--test`                  | Test rsync with checksums instead of times                           |
+
+The steps are self explanatory and, unless specified with `--step`, `--begin`,
+or `--end` options, run in the following order:
+
+1. `backup`
+2. `mount`
+3. `sync`
+5. `kernel`
+8. `unmount`
+9. `activate`
+10. `firmware` (not run by default)
 
 ## Development
 
