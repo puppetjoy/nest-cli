@@ -34,6 +34,9 @@ module Nest
       when 'raspberrypi'
         require_relative 'installer/raspberrypi'
         Nest::Installer::RaspberryPi.new(name, image, platform, role)
+      when 'rock5'
+        require_relative 'installer/rock5'
+        Nest::Installer::Rock5.new(name, image, platform, role)
       when 'sopine'
         require_relative 'installer/sopine'
         Nest::Installer::Sopine.new(name, image, platform, role)
