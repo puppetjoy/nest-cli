@@ -70,10 +70,9 @@ module Nest
       end
 
       def kernel_src
-        current_sources = File.basename Dir["#{installer.image}/usr/src/linux-*"].first
-        dest = File.join(dir, '/usr/src')
-        cmd.run(ADMIN + "#{rsync} --delete -f 'R #{current_sources}/**' -f 'P **' " \
-                        "--itemize-changes --progress root@falcon:'#{installer.image}/usr/src/linux*' #{dest}",
+        dest = File.join(dir, '/usr/src/linux')
+        cmd.run(ADMIN + "#{rsync} --delete " \
+                        "--itemize-changes --progress root@falcon:'#{installer.image}/usr/src/linux/' #{dest}",
                 out: '/dev/stdout', err: '/dev/stderr')
       end
 
