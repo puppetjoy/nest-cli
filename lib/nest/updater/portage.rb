@@ -108,7 +108,7 @@ module Nest
         raise 'Failed to configure system with Puppet' unless [0, 2].include?(status)
 
         # Rerun to ensure idempotence
-        status = run('puppet agent --test', directout: true) if status == 2
+        status = run('puppet agent --test --use_cached_catalog', directout: true) if status == 2
         raise 'Failed to configure system with Puppet' unless status.zero?
 
         true
