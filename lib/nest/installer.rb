@@ -157,7 +157,7 @@ module Nest
         cmd.run(ADMIN + "zfs create -o encryption=aes-128-gcm -o keyformat=passphrase -o keylocation=prompt #{zroot}",
                 input: passphrase)
       end
-      cmd.run ADMIN + "zfs create #{zroot}/ROOT"
+      cmd.run ADMIN + "zfs create -o atime=off #{zroot}/ROOT"
       cmd.run ADMIN + "zfs create -o mountpoint=/ #{zroot}/ROOT/A"
       cmd.run ADMIN + "zfs create -o mountpoint=/var #{zroot}/ROOT/A/var"
       cmd.run ADMIN + "zfs create -o mountpoint=/usr/lib/debug -o compression=zstd #{zroot}/ROOT/A/debug"
