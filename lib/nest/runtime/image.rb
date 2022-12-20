@@ -40,7 +40,11 @@ module Nest
           raise "Image '#{image}' not found"
 
         qemu_args = %w[aarch64 arm x86_64].reduce([]) do |args, arch|
-          args + %W[-v /usr/bin/qemu-#{arch}:/usr/bin/qemu-#{arch}:ro] if File.exist? "/usr/bin/qemu-#{arch}"
+          if File.exist? "/usr/bin/qemu-#{arch}"
+            args + %W[-v /usr/bin/qemu-#{arch}:/usr/bin/qemu-#{arch}:ro]
+          else
+            args
+          end
         end
 
         portage_args = if options[:portage]

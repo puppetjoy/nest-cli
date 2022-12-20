@@ -17,8 +17,12 @@ module Nest
       end
 
       def exec(command = nil, options = {})
-        qemu_args = %w[aarch64 arm x86_64].each_with_object([]) do |arch, args|
-          args + ["--bind-ro=/usr/bin/qemu-#{arch}"] if File.exist? "/usr/bin/qemu-#{arch}"
+        qemu_args = %w[aarch64 arm x86_64].reduce([]) do |args, arch|
+          if File.exist? "/usr/bin/qemu-#{arch}"
+            args + ["--bind-ro=/usr/bin/qemu-#{arch}"]
+          else
+            args
+          end
         end
 
         portage_args = if options[:portage]
