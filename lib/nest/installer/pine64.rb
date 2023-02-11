@@ -3,7 +3,7 @@
 module Nest
   class Installer
     # Platform installer overrides
-    class Sopine < Installer
+    class Pine64 < Installer
       def partition(disk)
         super(disk, 56)
       end

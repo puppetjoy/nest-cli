@@ -25,6 +25,9 @@ module Nest
       when 'beagleboneblack'
         require_relative 'installer/beagleboneblack'
         Nest::Installer::BeagleBoneBlack.new(name, image, platform, role)
+      when 'pine64', 'sopine'
+        require_relative 'installer/pine64'
+        Nest::Installer::Pine64.new(name, image, platform, role)
       when 'pinebookpro'
         require_relative 'installer/pinebookpro'
         Nest::Installer::PinebookPro.new(name, image, platform, role)
@@ -37,9 +40,6 @@ module Nest
       when 'rock5'
         require_relative 'installer/rock5'
         Nest::Installer::Rock5.new(name, image, platform, role)
-      when 'sopine'
-        require_relative 'installer/sopine'
-        Nest::Installer::Sopine.new(name, image, platform, role)
       when 'haswell'
         Nest::Installer.new(name, image, platform, role)
       else
