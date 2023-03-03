@@ -28,15 +28,18 @@ module Nest
       when 'pine64', 'sopine'
         require_relative 'installer/pine64'
         Nest::Installer::Pine64.new(name, image, platform, role)
-      when 'pinebookpro'
-        require_relative 'installer/pinebookpro'
-        Nest::Installer::PinebookPro.new(name, image, platform, role)
+      when 'pinebookpro', 'rockpro64'
+        require_relative 'installer/rockpro64'
+        Nest::Installer::RockPro64.new(name, image, platform, role)
       when 'live'
         require_relative 'installer/live'
         Nest::Installer::Live.new(name, image, platform, role)
       when 'raspberrypi'
         require_relative 'installer/raspberrypi'
         Nest::Installer::RaspberryPi.new(name, image, platform, role)
+      when 'rockpro64'
+        require_relative 'installer/rockpro64'
+        Nest::Installer::Rock5.new(name, image, platform, role)
       when 'rock5'
         require_relative 'installer/rock5'
         Nest::Installer::Rock5.new(name, image, platform, role)
