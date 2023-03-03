@@ -42,7 +42,7 @@ module Nest
         keep_cmd    = "awk #{keep_awk.shellescape} #{installer.image}/var/db/pkg/*/*/CONTENTS | sort -u"
         keep_filter = "--filter=merge\\ <(#{keep_cmd})"
         filters     = "#{test_filter}#{main_filter}#{keep_filter}"
-        rsync_cmd   = "#{rsync} --delete #{filters} --itemize-changes --progress root@falcon:#{installer.image}/ #{dir}"
+        rsync_cmd   = "#{rsync} --delete #{filters} --inplace --itemize-changes --progress root@falcon:#{installer.image}/ #{dir}"
 
         cmd.run(ADMIN + "zsh -c #{rsync_cmd.shellescape}", out: '/dev/stdout', err: '/dev/stderr')
       end
@@ -71,7 +71,7 @@ module Nest
 
       def kernel_src
         dest = File.join(dir, '/usr/src/linux')
-        cmd.run(ADMIN + "#{rsync} --delete " \
+        cmd.run(ADMIN + "#{rsync} --delete --inplace " \
                         "--itemize-changes --progress root@falcon:'#{installer.image}/usr/src/linux/' #{dest}",
                 out: '/dev/stdout', err: '/dev/stderr')
       end
@@ -79,7 +79,7 @@ module Nest
       def kernel_modules
         current_modules = File.basename Dir["#{installer.image}/lib/modules/*"].first
         dest = File.join(dir, '/lib/modules')
-        cmd.run(ADMIN + "#{rsync} --delete -f 'R #{current_modules}/**' -f 'P **' " \
+        cmd.run(ADMIN + "#{rsync} --delete -f 'R #{current_modules}/**' -f 'P **' --inplace " \
                         "--itemize-changes --progress root@falcon:#{installer.image}/lib/modules/ #{dest}",
                 out: '/dev/stdout', err: '/dev/stderr')
       end
