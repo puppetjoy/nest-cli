@@ -43,7 +43,7 @@ module Nest
       when 'rock5'
         require_relative 'installer/rock5'
         Nest::Installer::Rock5.new(name, image, platform, role)
-      when 'haswell'
+      when 'haswell', 'vmware'
         Nest::Installer.new(name, image, platform, role)
       else
         raise "Platform '#{platform}' is unsupported"
