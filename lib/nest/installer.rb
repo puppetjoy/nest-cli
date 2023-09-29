@@ -34,7 +34,7 @@ module Nest
       when 'live'
         require_relative 'installer/live'
         Nest::Installer::Live.new(name, image, platform, role)
-      when 'raspberrypi'
+      when /raspberrypi\d*/
         require_relative 'installer/raspberrypi'
         Nest::Installer::RaspberryPi.new(name, image, platform, role)
       when 'rockpro64'
