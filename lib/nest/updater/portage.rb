@@ -48,8 +48,8 @@ module Nest
         stop_puppet
 
         if run('eix -eu sys-apps/portage > /dev/null', runner: forcecmd).zero?
-          status = run("#{emerge} -1 sys-apps/portage", directout: true)
-          raise 'Failed to update Portage' unless status.zero?
+          run("#{emerge} -1 sys-apps/portage", directout: true)
+          # allow failure due to complex dependencies
         end
 
         extra_args = options[:extra_args] ? " #{options[:extra_args]}" : ''
@@ -102,7 +102,7 @@ module Nest
       def run_puppet(kernel: false)
         stop_puppet
 
-        env = kernel ? 'FACTER_build=kernel ' : ''
+        env = kernel ? 'FACTER_build=kernel FACTER_force_kernel_install=1 ' : ''
         args = options[:noop] ? ' --noop' : ''
         status = run("#{env}puppet agent --test#{args}", directout: true)
         raise 'Failed to configure system with Puppet' unless [0, 2].include?(status)
