@@ -87,7 +87,7 @@ module Nest
       def kernel_install
         args = options[:noop] ? ' --noop' : ''
         status = run('FACTER_force_kernel_install=1 puppet agent --test ' \
-                     "--tags nest::base::bootloader,nest::base::dracut,nest::base::firmware#{args}", directout: true)
+                     "--tags nest::base::bootloader,nest::base::dracut,nest::base::firmware,nest::base::zfs#{args}", directout: true)
         raise 'Failed to install kernel' unless [0, 2].include? status
 
         reload_kexec
