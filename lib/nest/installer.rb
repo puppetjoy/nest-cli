@@ -64,7 +64,7 @@ module Nest
 
       steps = {
         partition: -> { partition(disk) },
-        format: -> { format(format_options) },
+        format: -> { format(**format_options) },
         mount: -> { mount },
         copy: -> { copy },
         bootloader: -> { bootloader },
@@ -99,7 +99,7 @@ module Nest
             logger.error 'Passphrases do not match'
             return false
           end
-          steps[:format] = -> { format(format_options.merge(passphrase: passphrase)) }
+          steps[:format] = -> { format(**format_options.merge(passphrase: passphrase)) }
         end
         steps[:mount] = -> { mount(passphrase) }
       end
