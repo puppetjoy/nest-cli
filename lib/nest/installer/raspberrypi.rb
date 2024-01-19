@@ -5,7 +5,8 @@ module Nest
     # Platform installer overrides
     class RaspberryPi < Installer
       def format(options = {})
-        super(**options.merge(swap_size: '8G'))
+        swap_size = platform == 'raspberrypi3' ? '1G' : '8G'
+        super(**options.merge(swap_size: swap_size))
       end
     end
   end
