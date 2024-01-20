@@ -29,7 +29,7 @@ module Nest
                          [
                            '-E', 'FEATURES=-ipc-sandbox -pid-sandbox -network-sandbox -usersandbox',
                            '--bind-ro=/etc/portage/make.conf',
-                           '--bind-ro=/var/db/repos'
+                           '--bind=/var/db/repos'
                          ]
                        else
                          []
