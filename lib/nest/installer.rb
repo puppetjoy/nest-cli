@@ -28,9 +28,9 @@ module Nest
       when 'pine64', 'sopine'
         require_relative 'installer/pine64'
         Nest::Installer::Pine64.new(name, image, platform, role)
-      when 'pinebookpro', 'rockpro64'
-        require_relative 'installer/rockpro64'
-        Nest::Installer::RockPro64.new(name, image, platform, role)
+      when 'pinebookpro', 'rockpro64', 'rock4'
+        require_relative 'installer/rk3399'
+        Nest::Installer::RK3399.new(name, image, platform, role)
       when 'live'
         require_relative 'installer/live'
         Nest::Installer::Live.new(name, image, platform, role)

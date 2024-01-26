@@ -3,9 +3,9 @@
 module Nest
   class Installer
     # Platform installer overrides
-    class RockPro64 < Installer
+    class RK3399 < Installer
       def format(options = {})
-        super(options.merge(swap_size: '8G'))
+        super(**options.merge(swap_size: '8G'))
       end
 
       def firmware(disk)
