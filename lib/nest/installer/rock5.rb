@@ -5,7 +5,7 @@ module Nest
     # Platform installer overrides
     class Rock5 < Installer
       def format(options = {})
-        super(options.merge(swap_size: '16G'))
+        super(**options.merge(swap_size: '16G'))
       end
 
       def firmware(disk)
