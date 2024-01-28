@@ -247,7 +247,7 @@ module Nest
       return false unless $DRY_RUN || ensure_target_mounted
 
       logger.info 'Installing bootloader'
-      puppet_status = nspawn(target, 'puppet agent --test --tags nest::base::bootloader,nest::base::dracut',
+      puppet_status = nspawn(target, 'puppet agent --test --tags nest::base::bootloader,nest::base::dracut,nest::base::zfs',
                              directout: true)
       unless [0, 2].include? puppet_status
         logger.error 'Puppet run to install bootloader failed'
