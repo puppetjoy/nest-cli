@@ -90,16 +90,21 @@ module Nest
 
       if steps.keys.index(start) <= steps.keys.index(:mount) && encrypt
         passphrase = prompt.mask('Encryption passphrase:')
-        if passphrase.length < 8
+        if passphrase && passphrase.length < 8
           logger.error 'Passphrase must be at least 8 characters long'
           return false
         end
         if steps.keys.index(start) <= steps.keys.index(:format)
-          if prompt.mask('Encryption passphrase (again):') != passphrase
-            logger.error 'Passphrases do not match'
-            return false
+          if passphrase
+            if prompt.mask('Encryption passphrase (again):') != passphrase
+              logger.error 'Passphrases do not match'
+              return false
+            end
+            steps[:format] = -> { format(**format_options.merge(passphrase: passphrase)) }
+          else
+            passphrase = File.read("#{image}/etc/machine-id").chomp
+            steps[:format] = -> { format(**format_options.merge(keylocation: 'file:///etc/machine-id', passphrase: passphrase)) }
           end
-          steps[:format] = -> { format(**format_options.merge(passphrase: passphrase)) }
         end
         steps[:mount] = -> { mount(passphrase) }
       end
@@ -147,7 +152,7 @@ module Nest
       logger.success "#{disk} is partitioned"
     end
 
-    def format(ashift: 9, passphrase: nil, fscache_size: '2G', swap_size: '4G')
+    def format(ashift: 9, keylocation: nil, passphrase: nil, fscache_size: '2G', swap_size: '4G')
       return false unless devices_ready?
 
       zroot = passphrase ? "#{name}/crypt" : name
@@ -159,6 +164,7 @@ module Nest
       if passphrase
         cmd.run(ADMIN + "zfs create -o encryption=aes-128-gcm -o keyformat=passphrase -o keylocation=prompt #{zroot}",
                 input: passphrase)
+        cmd.run(ADMIN + "zfs set keylocation=#{keylocation} #{zroot}") if keylocation
       end
       cmd.run ADMIN + "zfs create -o atime=off #{zroot}/ROOT"
       cmd.run ADMIN + "zfs create -o mountpoint=/ #{zroot}/ROOT/A"
