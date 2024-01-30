@@ -195,7 +195,11 @@ module Nest
       end
 
       logger.info 'Creating boot filesystem'
-      cmd.run ADMIN + "mkfs.#{boot_fstype} #{boot_device}"
+      if boot_fstype == 'vfat'
+        cmd.run ADMIN + "mkfs.vfat -n #{labelname}-bt #{boot_device}" # label <= 11 chars for FAT32
+      else
+        cmd.run ADMIN + "mkfs.#{boot_fstype} #{boot_device}"
+      end
       logger.success 'Created boot filesystem'
     end
 
@@ -339,7 +343,7 @@ module Nest
     end
 
     def boot_fstype
-      `awk '/^PARTLABEL=#{name}-boot\\s/ { print $3 }' #{image}/etc/fstab`.chomp
+      `awk '/^(PART)?LABEL=(#{name}-boot|#{labelname}-bt)\\s/ { print $3 }' #{image}/etc/fstab`.chomp
     end
 
     def ensure_boot_device_unmounted

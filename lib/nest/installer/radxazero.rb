@@ -9,6 +9,10 @@ module Nest
       end
 
       def firmware(disk)
+        # Firmware overwrites GPT :(
+        logger.warn 'Converting GPT to MBR!'
+        cmd.run ADMIN + "gdisk #{disk}", in: "r\ng\nw\ny\n"
+
         logger.info "Installing firmware to #{disk}"
         cmd.run ADMIN + "dd if=#{image}/usr/src/fip/radxa-zero/u-boot.bin.sd.bin of=#{disk} skip=1 seek=1"
         cmd.run ADMIN + "dd if=#{image}/usr/src/fip/radxa-zero/u-boot.bin.sd.bin of=#{disk} bs=1 count=440"
