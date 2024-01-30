@@ -6,7 +6,7 @@ module Nest
   class Installer
     # Platform installer overrides
     class Live < Installer
-      IMAGE_SIZE = '20G'
+      IMAGE_SIZE = '32G'
 
       def install(*args)
         super(*args, supports_encryption: false)
@@ -68,7 +68,7 @@ module Nest
         cmd.run("mkdir -p #{finish_dir}/LiveOS") unless Dir.exist? "#{finish_dir}/LiveOS"
         cmd.run("mksquashfs #{build_dir}/LiveOS/squashfs-root #{finish_dir}/LiveOS/squashfs.img -noappend",
                 out: '/dev/stdout')
-        cmd.run "grub-mkrescue --modules=part_gpt -o #{disk.shellescape} #{finish_dir} -- -volid #{name.upcase}"
+        cmd.run "grub-mkrescue --modules=part_gpt -o #{disk.shellescape} #{finish_dir} -- -iso-level 3 -volid #{name.upcase}"
         logger.success "Created bootable image #{disk}"
       end
 
