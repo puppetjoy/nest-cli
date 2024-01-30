@@ -52,8 +52,9 @@ module Nest
           # allow failure due to complex dependencies
         end
 
+        exclude = ['app-emulation/qemu', 'sys-fs/zfs-kmod'].map { |x| "-X #{x}" }.join(' ')
         extra_args = options[:extra_args] ? " #{options[:extra_args]}" : ''
-        status = run("#{emerge} -DuN -X app-emulation/qemu -X sys-fs/zfs-kmod --with-bdeps=y --keep-going#{extra_args} @world", directout: true)
+        status = run("#{emerge} -DuN --with-bdeps=y --keep-going #{exclude}#{extra_args} @world", directout: true)
         raise 'Failed to update system' unless status.zero?
 
         status = run("#{emerge} --depclean", directout: true)
