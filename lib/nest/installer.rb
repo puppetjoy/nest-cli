@@ -37,9 +37,6 @@ module Nest
       when /raspberrypi\d*/
         require_relative 'installer/raspberrypi'
         Nest::Installer::RaspberryPi.new(name, image, platform, role)
-      when 'rockpro64'
-        require_relative 'installer/rockpro64'
-        Nest::Installer::Rock5.new(name, image, platform, role)
       when 'rock5'
         require_relative 'installer/rock5'
         Nest::Installer::Rock5.new(name, image, platform, role)
@@ -103,7 +100,10 @@ module Nest
             steps[:format] = -> { format(**format_options.merge(passphrase: passphrase)) }
           else
             passphrase = File.read("#{image}/etc/machine-id").chomp
-            steps[:format] = -> { format(**format_options.merge(keylocation: 'file:///etc/machine-id', passphrase: passphrase)) }
+            steps[:format] = lambda do
+              format(**format_options.merge(keylocation: 'file:///etc/machine-id',
+                                            passphrase: passphrase))
+            end
           end
         end
         steps[:mount] = -> { mount(passphrase) }
@@ -253,8 +253,8 @@ module Nest
       return false unless $DRY_RUN || ensure_target_mounted
 
       logger.info 'Installing bootloader'
-      puppet_status = nspawn(target, 'puppet agent --test --tags nest::base::bootloader,nest::base::dracut,nest::base::zfs',
-                             directout: true)
+      puppet_cmd = 'puppet agent --test --tags nest::base::bootloader,nest::base::dracut,nest::base::zfs'
+      puppet_status = nspawn(target, puppet_cmd, directout: true)
       unless [0, 2].include? puppet_status
         logger.error 'Puppet run to install bootloader failed'
         return false

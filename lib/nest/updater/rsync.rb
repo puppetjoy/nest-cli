@@ -42,7 +42,8 @@ module Nest
         keep_cmd    = "awk #{keep_awk.shellescape} #{installer.image}/var/db/pkg/*/*/CONTENTS | sort -u"
         keep_filter = "--filter=merge\\ <(#{keep_cmd})"
         filters     = "#{test_filter}#{main_filter}#{keep_filter}"
-        rsync_cmd   = "#{rsync} --delete #{filters} --inplace --itemize-changes --progress root@falcon:#{installer.image}/ #{dir}"
+        rsync_cmd   = "#{rsync} --delete #{filters} --inplace --itemize-changes --progress " \
+                      "root@falcon:#{installer.image}/ #{dir}"
 
         cmd.run(ADMIN + "zsh -c #{rsync_cmd.shellescape}", out: '/dev/stdout', err: '/dev/stderr')
       end
@@ -87,7 +88,8 @@ module Nest
       def kernel_install
         args = options[:noop] ? ' --noop' : ''
         status = run('FACTER_force_kernel_install=1 puppet agent --test ' \
-                     "--tags nest::base::bootloader,nest::base::dracut,nest::base::firmware,nest::base::zfs#{args}", directout: true)
+                     "--tags nest::base::bootloader,nest::base::dracut,nest::base::firmware,nest::base::zfs#{args}",
+                     directout: true)
         raise 'Failed to install kernel' unless [0, 2].include? status
 
         reload_kexec

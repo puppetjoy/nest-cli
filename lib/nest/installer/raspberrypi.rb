@@ -12,10 +12,10 @@ module Nest
       def partition(disk)
         super(disk)
 
-        if platform == 'raspberrypi3'
-          logger.warn 'Remember to setup the hybrid MBR!'
-          logger.warn 'See: https://gitlab.james.tl/nest/puppet/-/wikis/Platforms/Raspberry-Pi#hybrid-mbr'
-        end
+        return unless platform == 'raspberrypi3'
+
+        logger.warn 'Remember to setup the hybrid MBR!'
+        logger.warn 'See: https://gitlab.james.tl/nest/puppet/-/wikis/Platforms/Raspberry-Pi#hybrid-mbr'
       end
     end
   end
