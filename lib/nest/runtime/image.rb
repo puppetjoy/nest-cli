@@ -51,7 +51,7 @@ module Nest
                          [
                            '-e', 'FEATURES=-ipc-sandbox -pid-sandbox -network-sandbox -usersandbox',
                            '-v', '/etc/portage/make.conf:/etc/portage/make.conf:ro',
-                           '-v', '/var/db/repos:/var/db/repos'
+                           '-v', '/var/db/repos:/var/db/repos:ro'
                          ]
                        else
                          []
