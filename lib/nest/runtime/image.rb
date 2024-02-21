@@ -39,7 +39,7 @@ module Nest
         cmd.run!("podman pull #{image.shellescape}").success? or
           raise "Image '#{image}' not found"
 
-        qemu_args = %w[aarch64 arm x86_64].reduce([]) do |args, arch|
+        qemu_args = %w[aarch64 arm riscv64 x86_64].reduce([]) do |args, arch|
           if File.exist? "/usr/bin/qemu-#{arch}"
             args + %W[-v /usr/bin/qemu-#{arch}:/usr/bin/qemu-#{arch}:ro]
           else
