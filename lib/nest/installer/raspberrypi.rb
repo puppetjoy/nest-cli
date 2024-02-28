@@ -14,9 +14,7 @@ module Nest
 
         return unless platform == 'raspberrypi3'
 
-        logger.warn 'Making the hybrid MBR!'
-        logger.warn 'See: https://gitlab.james.tl/nest/puppet/-/wikis/Platforms/Raspberry-Pi#hybrid-mbr'
-        cmd.run ADMIN + "gdisk #{disk}", in: "r\nh\n1\nn\n0c\nn\nn\nw\ny\n"
+        make_hybrid_mbr(disk)
       end
     end
   end

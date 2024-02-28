@@ -25,21 +25,24 @@ module Nest
       when 'beagleboneblack'
         require_relative 'installer/beagleboneblack'
         Nest::Installer::BeagleBoneBlack.new(name, image, platform, role)
-      when 'pine64', 'sopine'
-        require_relative 'installer/pine64'
-        Nest::Installer::Pine64.new(name, image, platform, role)
       when 'live'
         require_relative 'installer/live'
         Nest::Installer::Live.new(name, image, platform, role)
-      when 'pinebookpro', 'rockpro64', 'rock4'
-        require_relative 'installer/rk3399'
-        Nest::Installer::RK3399.new(name, image, platform, role)
+      when 'milkv-pioneer'
+        require_relative 'installer/milkvpioneer'
+        Nest::Installer::MilkvPioneer.new(name, image, platform, role)
+      when 'pine64', 'sopine'
+        require_relative 'installer/pine64'
+        Nest::Installer::Pine64.new(name, image, platform, role)
       when 'radxazero'
         require_relative 'installer/radxazero'
         Nest::Installer::RadxaZero.new(name, image, platform, role)
       when /raspberrypi\d*/
         require_relative 'installer/raspberrypi'
         Nest::Installer::RaspberryPi.new(name, image, platform, role)
+      when 'pinebookpro', 'rockpro64', 'rock4'
+        require_relative 'installer/rk3399'
+        Nest::Installer::RK3399.new(name, image, platform, role)
       when 'rock5'
         require_relative 'installer/rock5'
         Nest::Installer::Rock5.new(name, image, platform, role)
@@ -260,7 +263,7 @@ module Nest
       return false unless $DRY_RUN || ensure_target_mounted
 
       logger.info 'Installing bootloader'
-      puppet_cmd = 'puppet agent --test --tags nest::base::bootloader,nest::base::dracut,nest::base::zfs'
+      puppet_cmd = 'puppet agent --test --tags boot'
       puppet_status = nspawn(target, puppet_cmd, directout: true)
       unless [0, 2].include? puppet_status
         logger.error 'Puppet run to install bootloader failed'
@@ -334,6 +337,13 @@ module Nest
 
     def boot_dir
       "#{target}/boot"
+    end
+
+    def make_hybrid_mbr(disk)
+      logger.warn 'Making the hybrid MBR!'
+      logger.warn 'See: https://gitlab.james.tl/nest/puppet/-/wikis/Platforms/Raspberry-Pi#hybrid-mbr'
+      cmd.run ADMIN + "gdisk #{disk}", in: "r\nh\n1\nn\n0c\nn\nn\nw\ny\n"
+      cmd.run 'udevadm settle'
     end
 
     private
