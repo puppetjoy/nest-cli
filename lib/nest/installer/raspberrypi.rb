@@ -9,12 +9,12 @@ module Nest
         super(**options.merge(swap_size: swap_size))
       end
 
-      def partition(disk)
-        super(disk)
+      def partition
+        return unless super
 
         return unless platform == 'raspberrypi3'
 
-        make_hybrid_mbr(disk)
+        make_hybrid_mbr(boot || disk)
       end
     end
   end

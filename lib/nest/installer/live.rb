@@ -12,7 +12,7 @@ module Nest
         super(*args, supports_encryption: false)
       end
 
-      def partition(_disk)
+      def partition
         return false unless ensure_image_unmounted
 
         if File.exist? rootfs_img
@@ -63,7 +63,7 @@ module Nest
         logger.success 'Copied bootloader for bootable image'
       end
 
-      def firmware(disk)
+      def firmware
         logger.info "Creating bootable image #{disk}"
         cmd.run("mkdir -p #{finish_dir}/LiveOS") unless Dir.exist? "#{finish_dir}/LiveOS"
         cmd.run("mksquashfs #{build_dir}/LiveOS/squashfs-root #{finish_dir}/LiveOS/squashfs.img -noappend",

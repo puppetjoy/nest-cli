@@ -193,6 +193,7 @@ module Nest
 
       desc 'install [options] NAME', 'Install a new host'
       option :clean, type: :boolean, desc: 'Just run the cleanup step'
+      option :boot, aliases: '-b', banner: 'DISK', desc: 'The disk to format and boot from'
       option :disk, aliases: '-d', required: true, desc: 'The disk to format and install on'
       option :encrypt, aliases: '-e', type: :boolean, desc: 'Use ZFS encryption'
       option :force, type: :boolean, desc: 'Try to correct unexpected system states'
@@ -204,7 +205,7 @@ module Nest
         Install a new host called NAME onto DISK starting at STEP where:
 
         \x5 NAME is a host with a valid Stage 3 image under /nest/hosts
-        \x5 DISK is a device name, like /dev/sda
+        \x5 DISK is a device name, like /dev/sda (or a whole disk ID if --boot specified)
         \x5 STEP is one of the following points where the installer should start and stop
 
         \x5* partition (default start)
@@ -232,7 +233,8 @@ module Nest
 
         require_relative 'installer'
         installer = Nest::Installer.for_host(name)
-        installer.install(options[:disk],
+        installer.install(options[:boot],
+                          options[:disk],
                           options[:encrypt],
                           options[:force],
                           start.to_sym,

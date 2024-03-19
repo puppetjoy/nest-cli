@@ -7,7 +7,7 @@ module Nest
   class Installer
     include Nest::CLI
 
-    attr_reader :name, :image, :platform, :role
+    attr_reader :name, :image, :platform, :role, :boot, :disk, :force
 
     def self.for_host(name)
       image = "/nest/hosts/#{name}"
@@ -60,19 +60,21 @@ module Nest
       @role = role
     end
 
-    def install(disk, encrypt, force, start = :partition, stop = :firmware, ashift = 9, supports_encryption: true)
+    def install(boot, disk, encrypt, force, start = :partition, stop = :firmware, ashift = 9, supports_encryption: true)
+      @boot = boot
+      @disk = disk
       @force = force
 
       format_options = { ashift: ashift, fscache_size: fscache_size(disk) }
 
       steps = {
-        partition: -> { partition(disk) },
+        partition: -> { partition },
         format: -> { format(**format_options) },
         mount: -> { mount },
         copy: -> { copy },
         bootloader: -> { bootloader },
         unmount: -> { unmount },
-        firmware: -> { firmware(disk) },
+        firmware: -> { firmware },
         cleanup: -> { cleanup }
       }
 
@@ -88,6 +90,11 @@ module Nest
 
       if encrypt && !supports_encryption
         logger.error "Platform '#{platform}' does not support encryption"
+        return false
+      end
+
+      if whole_disk? && !boot
+        logger.error 'Whole disk zpools are only supported with a boot disk'
         return false
       end
 
@@ -118,13 +125,8 @@ module Nest
       steps.values[(steps.keys.index start)..(steps.keys.index stop)].drop_while(&:call).empty?
     end
 
-    def partition(disk, gpt_table_length = nil)
+    def partition(gpt_table_length: nil)
       return false unless devices_ready?
-
-      logger.info "Partitioning #{disk}"
-
-      cmd.run!(ADMIN + "wipefs -a #{disk}").success? or
-        logger.warn "Failed to wipe signatures from #{disk}"
 
       script = StringIO.new
       script.puts 'label: gpt'
@@ -135,38 +137,41 @@ module Nest
         script.puts "size=30720, type=21686148-6449-6E6F-744E-656564454649, name=\"#{name}-bios\""
         script.puts "size=512MiB, type=BC13C2FF-59E6-4262-A352-B275FD6F7172, name=\"#{name}-boot\""
       end
-      script.puts "name=\"#{name}\""
-      script.rewind
 
-      script_debug = -> { script.each_line { |line| logger.debug 'sfdisk:', line.chomp } }
-      if $DRY_RUN
-        logger.log_at :debug do
-          script_debug.call
+      if boot
+        logger.info "Partitioning #{boot}"
+        return false unless sfdisk(boot, script)
+
+        logger.success "#{boot} is partitioned"
+
+        unless whole_disk?
+          script = StringIO.new
+          script.puts 'label: gpt'
         end
-      else
-        script_debug.call
       end
-      script.rewind
 
-      if cmd.run!(ADMIN + "sfdisk -q #{disk}", in: script).failure?
-        logger.error "Failed to partition #{disk}"
-        return false
+      unless whole_disk?
+        script.puts "name=\"#{name}\""
+
+        logger.info "Partitioning #{boot}"
+        return false unless sfdisk(disk, script)
+
+        logger.success "#{disk} is partitioned"
       end
 
       cmd.run 'udevadm settle'
-
-      logger.success "#{disk} is partitioned"
     end
 
     def format(ashift: 9, keylocation: nil, passphrase: nil, fscache_size: '2G', swap_size: '4G')
       return false unless devices_ready?
 
+      vdev = whole_disk? ? disk : name
       zroot = passphrase ? "#{name}/crypt" : name
 
       logger.info "Creating ZFS pool '#{name}'"
       cmd.run ADMIN + "zpool create -f -m none -o ashift=#{ashift} " \
                       '-O compression=lz4 -O xattr=sa -O acltype=posixacl ' \
-                      "-R #{target} #{name} #{name}"
+                      "-R #{target} #{name} #{vdev}"
       if passphrase
         cmd.run(ADMIN + "zfs create -o encryption=aes-128-gcm -o keyformat=passphrase -o keylocation=prompt #{zroot}",
                 input: passphrase)
@@ -213,7 +218,7 @@ module Nest
         logger.info "ZFS pool '#{name}' is already mounted"
       else
         if zpool_imported?
-          if @force
+          if force
             logger.warn "Exporting ZFS pool '#{name}' to reimport it at #{target}"
             cmd.run ADMIN + "zpool export #{name}"
           else
@@ -280,7 +285,7 @@ module Nest
       logger.success 'Filesystems unmounted'
     end
 
-    def firmware(_disk)
+    def firmware
       true
     end
 
@@ -294,7 +299,7 @@ module Nest
 
     def ensure_device_unmounted(device, description)
       if device_mounted? device
-        if @force
+        if force
           logger.warn "Unmounting #{description}"
           cmd.run ADMIN + "umount #{device}"
         else
@@ -348,6 +353,30 @@ module Nest
 
     private
 
+    def sfdisk(disk, script)
+      cmd.run!(ADMIN + "wipefs -a #{disk}").success? or
+        logger.warn "Failed to wipe signatures from #{disk}"
+
+      script.rewind
+
+      script_debug = -> { script.each_line { |line| logger.debug 'sfdisk:', line.chomp } }
+      if $DRY_RUN
+        logger.log_at :debug do
+          script_debug.call
+        end
+      else
+        script_debug.call
+      end
+      script.rewind
+
+      if cmd.run!(ADMIN + "sfdisk -q #{disk}", in: script).failure?
+        logger.error "Failed to partition #{disk}"
+        return false
+      end
+
+      true
+    end
+
     def boot_device
       "/dev/disk/by-partlabel/#{name}-boot"
     end
@@ -377,9 +406,13 @@ module Nest
       system "mountpoint -q #{target}"
     end
 
+    def whole_disk?
+      disk !~ %r{^/}
+    end
+
     def zpool_absent?
       if zpool_imported?
-        if @force
+        if force
           logger.warn "Destroying existing ZFS pool '#{name}'"
           cmd.run ADMIN + "zpool destroy #{name}"
         else

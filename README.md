@@ -99,6 +99,7 @@ partitioning to firmware installation and provides reasonable fault tolerance.
 | Options                  | Description                                                                    |
 |--------------------------|--------------------------------------------------------------------------------|
 | `--clean`                | Just run the cleanup step                                                      |
+| `-b DISK`, `--boot=DISK` | Optional boot disk to use. Enables whole disk zpool support.                   |
 | `-d DISK`, `--disk=DISK` | The disk to format and install on (*e.g.* /dev/sda or /tmp/boot.iso)           |
 | `-e`, `--encrypt`        | Use ZFS encryption                                                             |
 | `--force`                | Run cleanup actions (like `umount`) to try to correct unexpected system states |
