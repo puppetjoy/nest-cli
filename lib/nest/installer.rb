@@ -110,12 +110,12 @@ module Nest
               logger.error 'Passphrases do not match'
               return false
             end
-            steps[:format] = -> { format(**format_options.merge(passphrase: passphrase)) }
+            steps[:format] = -> { format(**format_options, passphrase: passphrase) }
           else
             passphrase = File.read("#{image}/etc/machine-id").chomp
             steps[:format] = lambda do
-              format(**format_options.merge(keylocation: 'file:///etc/machine-id',
-                                            passphrase: passphrase))
+              format(**format_options, keylocation: 'file:///etc/machine-id',
+                                       passphrase: passphrase)
             end
           end
         end
