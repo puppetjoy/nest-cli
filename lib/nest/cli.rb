@@ -15,6 +15,15 @@ module Nest
       $DRY_RUN = options[:dry_run]
       $LOG_DEBUG = options[:debug]
       $QUIET = options[:quiet]
+
+      # Trap SIGTERM and SIGINT and kill all child processes
+      %w[TERM INT].each do |signal|
+        Signal.trap(signal) do
+          puts "Received #{signal}, terminating child processes..."
+          Process.kill('TERM', -Process.getpgrp)
+          exit SYSTEM_ERROR
+        end
+      end
     end
 
     def cmd
