@@ -12,7 +12,7 @@ module Nest
       def partition
         return unless super
 
-        return unless platform == 'raspberrypi3'
+        return true unless platform == 'raspberrypi3'
 
         make_hybrid_mbr(boot || disk)
       end
