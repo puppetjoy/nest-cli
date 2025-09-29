@@ -20,6 +20,7 @@ module Nest
       %w[TERM INT].each do |signal|
         Signal.trap(signal) do
           puts "Received #{signal}, terminating child processes..."
+          Signal.trap(signal, 'DEFAULT') # Prevent re-entering the trap
           Process.kill('TERM', -Process.getpgrp)
           exit SYSTEM_ERROR
         end
