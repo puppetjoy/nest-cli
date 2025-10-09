@@ -183,7 +183,7 @@ module Nest
       cmd.run ADMIN + "zfs create -o mountpoint=/usr/lib/debug -o compression=zstd #{zroot}/ROOT/A/debug"
       cmd.run ADMIN + "zfs create -o mountpoint=/usr/src -o compression=zstd #{zroot}/ROOT/A/src"
       cmd.run ADMIN + "zfs create -o mountpoint=/home #{zroot}/home"
-      cmd.run ADMIN + "zfs create #{zroot}/home/james"
+      cmd.run ADMIN + "zfs create #{zroot}/home/joy"
       cmd.run ADMIN + "zpool set bootfs=#{zroot}/ROOT/A #{name}"
       logger.success "Created ZFS pool '#{name}'"
 
