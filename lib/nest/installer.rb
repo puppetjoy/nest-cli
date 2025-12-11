@@ -9,7 +9,7 @@ module Nest
 
     attr_reader :name, :image, :platform, :role, :boot, :disk, :force
 
-    def self.for_host(name, boot = nil, disk = nil)
+    def self.for_host(name)
       image = "/nest/hosts/#{name}"
 
       FileTest.symlink? "#{image}/etc/portage/make.profile" or
@@ -20,12 +20,6 @@ module Nest
 
       platform = Regexp.last_match(1)
       role     = Regexp.last_match(2)
-
-      # If boot looks like hostname/FQDN and disk is a directory, use iPXE installer regardless of platform
-      if boot && boot =~ /^(?=.{1,253}$)([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)(\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/ && disk && File.directory?(disk)
-        require_relative 'installer/ipxe'
-        return Nest::Installer::IPXE.new(name, image, platform, role, disk)
-      end
 
       case platform
       when 'beagleboneblack'

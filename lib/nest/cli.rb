@@ -204,7 +204,7 @@ module Nest
       desc 'install [options] NAME', 'Install a new host'
       option :clean, type: :boolean, desc: 'Just run the cleanup step'
       option :boot, aliases: '-b', banner: 'DISK', desc: 'The disk to format and boot from'
-      option :disk, aliases: '-d', desc: 'The disk to format and install on'
+      option :disk, aliases: '-d', required: true, desc: 'The disk to format and install on'
       option :encrypt, aliases: '-e', type: :boolean, desc: 'Use ZFS encryption'
       option :force, type: :boolean, desc: 'Try to correct unexpected system states'
       option :step, aliases: '-s', desc: 'Only run this step'
@@ -241,19 +241,10 @@ module Nest
           stop  = options[:end]
         end
 
-        # If boot looks like a hostname/FQDN and disk is not provided, default to /export/hosts
-        hostname_like = options[:boot] && options[:boot].to_s =~ /^(?=.{1,253}$)([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)(\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/
-        disk_opt = options[:disk] || (hostname_like ? '/export/hosts' : nil)
-
-        if disk_opt.nil?
-          logger.error 'Missing required option --disk. Provide -d or --disk, or set --boot to a hostname to default to /export/hosts.'
-          exit USER_ERROR
-        end
-
         require_relative 'installer'
-        installer = Nest::Installer.for_host(name, options[:boot], disk_opt)
+        installer = Nest::Installer.for_host(name)
         installer.install(options[:boot],
-                          disk_opt,
+                          options[:disk],
                           options[:encrypt],
                           options[:force],
                           start.to_sym,
