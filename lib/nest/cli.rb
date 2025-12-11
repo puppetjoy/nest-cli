@@ -205,6 +205,7 @@ module Nest
       option :clean, type: :boolean, desc: 'Just run the cleanup step'
       option :boot, aliases: '-b', banner: 'DISK', desc: 'The disk to format and boot from'
       option :disk, aliases: '-d', required: true, desc: 'The disk to format and install on'
+      option :installer, aliases: '-i', type: :boolean, desc: 'Create an installer'
       option :encrypt, aliases: '-e', type: :boolean, desc: 'Use ZFS encryption'
       option :force, type: :boolean, desc: 'Try to correct unexpected system states'
       option :step, aliases: '-s', desc: 'Only run this step'
@@ -249,7 +250,8 @@ module Nest
                           options[:force],
                           start.to_sym,
                           stop.to_sym,
-                          options[:ashift]) or exit USER_ERROR
+                          options[:ashift],
+                          installer: options[:installer]) or exit USER_ERROR
       rescue RuntimeError => e
         logger.error(e.message)
         exit USER_ERROR

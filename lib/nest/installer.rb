@@ -60,10 +60,13 @@ module Nest
       @role = role
     end
 
-    def install(boot, disk, encrypt, force, start = :partition, stop = :firmware, ashift = 9, supports_encryption: true)
+    def install(boot, disk, encrypt, force, start = :partition, stop = :firmware, ashift = 9,
+                supports_encryption: true, installer: false)
       @boot = boot
       @disk = disk
       @force = force
+      @installer = installer
+      @encrypt = encrypt
 
       format_options = { ashift: ashift, fscache_size: fscache_size(disk) }
 
@@ -168,12 +171,12 @@ module Nest
       return false unless devices_ready?
 
       vdev = whole_disk? ? disk : name
-      zroot = passphrase ? "#{name}/crypt" : name
+      zroot = passphrase ? "#{poolname}/crypt" : poolname
 
       logger.info "Creating ZFS pool '#{name}'"
       cmd.run ADMIN + "zpool create -f -m none -o ashift=#{ashift} " \
                       '-O compression=lz4 -O xattr=sa -O acltype=posixacl ' \
-                      "-R #{target} #{name} #{vdev}"
+                      "-R #{target} #{poolname} #{vdev}"
       if passphrase
         cmd.run(ADMIN + "zfs create -o encryption=aes-128-gcm -o keyformat=passphrase -o keylocation=prompt #{zroot}",
                 input: passphrase)
@@ -186,7 +189,7 @@ module Nest
       cmd.run ADMIN + "zfs create -o mountpoint=/usr/src -o compression=zstd #{zroot}/ROOT/A/src"
       cmd.run ADMIN + "zfs create -o mountpoint=/home #{zroot}/home"
       cmd.run ADMIN + "zfs create #{zroot}/home/joy"
-      cmd.run ADMIN + "zpool set bootfs=#{zroot}/ROOT/A #{name}"
+      cmd.run ADMIN + "zpool set bootfs=#{zroot}/ROOT/A #{poolname}"
       logger.success "Created ZFS pool '#{name}'"
 
       logger.info 'Creating swap space'
@@ -222,7 +225,7 @@ module Nest
         if zpool_imported?
           if force
             logger.warn "Exporting ZFS pool '#{name}' to reimport it at #{target}"
-            cmd.run ADMIN + "zpool export #{name}"
+            cmd.run ADMIN + "zpool export #{poolname}"
           else
             logger.error "ZFS pool '#{name}' is imported but not mounted to #{target}"
             logger.error "Export the pool or use '--force' to continue"
@@ -231,8 +234,8 @@ module Nest
         end
 
         logger.info 'Importing ZFS pool'
-        cmd.run ADMIN + "zpool import -f -R #{target} #{name}"
-        cmd.run(ADMIN + "zfs load-key -r -L prompt #{name}/crypt", input: passphrase) if passphrase
+        cmd.run ADMIN + "zpool import -f -R #{target} #{poolname}"
+        cmd.run(ADMIN + "zfs load-key -r -L prompt #{poolname}/crypt", input: passphrase) if passphrase
         cmd.run ADMIN + 'zfs mount -al' # rubocop:disable Style/StringConcatenation
         logger.success 'Imported ZFS pool'
       end
@@ -270,19 +273,27 @@ module Nest
       return false unless $DRY_RUN || ensure_target_mounted
 
       logger.info 'Installing bootloader'
+
+      # Write rpool fact so Puppet can configure ZFS datasets appropriately
+      facts_dir = File.join(target, 'etc/puppetlabs/facter/facts.d')
+      cmd.run ADMIN + "mkdir -p #{facts_dir}"
+      rpool_value = @encrypt ? "#{poolname}/crypt" : poolname
+      cmd.run(ADMIN + "tee #{File.join(facts_dir, 'rpool.txt')}", in: "rpool=#{rpool_value}\n")
+
       puppet_cmd = 'puppet agent --test --tags boot'
       puppet_status = nspawn(target, puppet_cmd, directout: true)
       unless [0, 2].include? puppet_status
         logger.error 'Puppet run to install bootloader failed'
         return false
       end
+
       logger.success 'Installed bootloader'
     end
 
     def unmount
       logger.info 'Unmounting filesystems'
       cmd.run ADMIN + "umount -R #{target}" if target_mounted?
-      cmd.run(ADMIN + "zpool export #{name}") if zpool_imported?
+      cmd.run(ADMIN + "zpool export #{poolname}") if zpool_imported?
       cmd.run(ADMIN + "rmdir #{target}") if Dir.exist? target
       logger.success 'Filesystems unmounted'
     end
@@ -415,10 +426,10 @@ module Nest
     def zpool_absent?
       if zpool_imported?
         if force
-          logger.warn "Destroying existing ZFS pool '#{name}'"
-          cmd.run ADMIN + "zpool destroy #{name}"
+          logger.warn "Destroying existing ZFS pool '#{poolname}'"
+          cmd.run ADMIN + "zpool destroy #{poolname}"
         else
-          logger.error "ZFS pool '#{name}' already exists"
+          logger.error "ZFS pool '#{poolname}' already exists"
           logger.error "Destroy it or use '--force' to continue"
           return false
         end
@@ -427,14 +438,18 @@ module Nest
     end
 
     def zpool_imported?
-      system "zpool list #{name} > /dev/null 2>&1"
+      system "zpool list #{poolname} > /dev/null 2>&1"
     end
 
     def zpool_mounted?
       return false unless zpool_imported?
 
-      altroot = `zpool get -H -o value altroot #{name}`.chomp
+      altroot = `zpool get -H -o value altroot #{poolname}`.chomp
       altroot == target
+    end
+
+    def poolname
+      @installer ? "#{name}-installer" : name
     end
   end
 end

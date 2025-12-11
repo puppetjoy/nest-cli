@@ -101,6 +101,7 @@ partitioning to firmware installation and provides reasonable fault tolerance.
 | `--clean`                | Just run the cleanup step                                                      |
 | `-b DISK`, `--boot=DISK` | Optional boot disk to use. Enables whole disk zpool support.                   |
 | `-d DISK`, `--disk=DISK` | The disk to format and install on (*e.g.* /dev/sda or /tmp/boot.iso)           |
+| `-i`, `--installer`      | Create an installer for reinstalling on the target                             |
 | `-e`, `--encrypt`        | Use ZFS encryption                                                             |
 | `--force`                | Run cleanup actions (like `umount`) to try to correct unexpected system states |
 | `-s STEP`, `--step=STEP` | Only run this installation step                                                |
