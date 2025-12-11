@@ -132,8 +132,10 @@ module Nest
       script.puts 'label: gpt'
       script.puts "table-length: #{gpt_table_length}" if gpt_table_length
       if boot_fstype == 'vfat'
-        script.puts "start=32768, size=512MiB, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, name=\"#{name}-boot\""
+        # Let sfdisk pick an aligned start sector for the ESP.
+        script.puts "size=512MiB, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, name=\"#{name}-boot\""
       else
+        # BIOS + /boot case, still letting sfdisk choose starts.
         script.puts "size=30720, type=21686148-6449-6E6F-744E-656564454649, name=\"#{name}-bios\""
         script.puts "size=512MiB, type=BC13C2FF-59E6-4262-A352-B275FD6F7172, name=\"#{name}-boot\""
       end
