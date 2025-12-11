@@ -25,9 +25,6 @@ module Nest
       when 'beagleboneblack'
         require_relative 'installer/beagleboneblack'
         Nest::Installer::BeagleBoneBlack.new(name, image, platform, role)
-      when 'live'
-        require_relative 'installer/live'
-        Nest::Installer::Live.new(name, image, platform, role)
       when 'milkv-pioneer'
         require_relative 'installer/milkvpioneer'
         Nest::Installer::MilkvPioneer.new(name, image, platform, role)
@@ -46,7 +43,7 @@ module Nest
       when 'rock5'
         require_relative 'installer/rock5'
         Nest::Installer::Rock5.new(name, image, platform, role)
-      when 'haswell', 'vmware', 'vmware-fusion'
+      when 'strix-halo', 'vmware-fusion', 'wellsburg'
         Nest::Installer.new(name, image, platform, role)
       else
         raise "Platform '#{platform}' is unsupported"
