@@ -25,8 +25,11 @@ module Nest
       when 'beagleboneblack'
         require_relative 'installer/beagleboneblack'
         Nest::Installer::BeagleBoneBlack.new(name, image, platform, role)
+      when 'milkv-mars'
+        require_relative 'installer/milkv_mars'
+        Nest::Installer::MilkvMars.new(name, image, platform, role)
       when 'milkv-pioneer'
-        require_relative 'installer/milkvpioneer'
+        require_relative 'installer/milkv_pioneer'
         Nest::Installer::MilkvPioneer.new(name, image, platform, role)
       when 'pine64', 'sopine'
         require_relative 'installer/pine64'
@@ -125,12 +128,16 @@ module Nest
       steps.values[(steps.keys.index start)..(steps.keys.index stop)].drop_while(&:call).empty?
     end
 
-    def partition(gpt_table_length: nil)
+    def partition(gpt_table_length: nil, extra_partitions: [])
       return false unless devices_ready?
 
       script = StringIO.new
       script.puts 'label: gpt'
       script.puts "table-length: #{gpt_table_length}" if gpt_table_length
+
+      # Let platforms install their own extra partitions
+      extra_partitions&.each { |line| script.puts line }
+
       if boot_fstype == 'vfat'
         # Let sfdisk pick an aligned start sector for the ESP.
         script.puts "size=512MiB, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, name=\"#{name}-boot\""
