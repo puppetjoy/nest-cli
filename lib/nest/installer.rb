@@ -128,12 +128,11 @@ module Nest
       steps.values[(steps.keys.index start)..(steps.keys.index stop)].drop_while(&:call).empty?
     end
 
-    def partition(gpt_table_length: nil, pre_script: [])
+    def partition(pre_script: [])
       return false unless devices_ready?
 
       script = StringIO.new
       script.puts 'label: gpt'
-      script.puts "table-length: #{gpt_table_length}" if gpt_table_length
 
       # Let platforms install their own extra partitions
       pre_script&.each { |line| script.puts line }

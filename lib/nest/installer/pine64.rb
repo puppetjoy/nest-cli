@@ -5,7 +5,10 @@ module Nest
     # Platform installer overrides
     class Pine64 < Installer
       def partition(options = {})
-        super(**options.merge(gpt_table_length: 56))
+        pre_script = [
+          'table-length: 56'
+        ]
+        super(**options.merge(pre_script: pre_script))
       end
 
       def firmware
