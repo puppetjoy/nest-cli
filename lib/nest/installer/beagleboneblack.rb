@@ -4,6 +4,13 @@ module Nest
   class Installer
     # Platform installer overrides
     class BeagleBoneBlack < Installer
+      def partition(options = {})
+        pre_script = [
+          'first-lba: 4096'
+        ]
+        super(**options.merge(pre_script: pre_script))
+      end
+
       def format(options = {})
         super(**options.merge(swap_size: '1536M'))
       end
