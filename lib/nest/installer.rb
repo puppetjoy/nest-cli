@@ -68,6 +68,8 @@ module Nest
       @installer = installer
       @encrypt = encrypt
 
+      @use_ext4_root = ext4_root_in_image?
+
       format_options = { ashift: ashift, fscache_size: fscache_size(disk) }
 
       steps = {
@@ -96,12 +98,17 @@ module Nest
         return false
       end
 
-      if whole_disk? && !boot
+      if @installer && @use_ext4_root
+        logger.error 'Installer images require ZFS root; ext4 root is unsupported with --installer'
+        return false
+      end
+
+      if !@use_ext4_root && whole_disk? && !boot
         logger.error 'Whole disk zpools are only supported with a boot disk'
         return false
       end
 
-      if steps.keys.index(start) <= steps.keys.index(:mount) && encrypt
+      if steps.keys.index(start) <= steps.keys.index(:mount) && encrypt && !@use_ext4_root
         passphrase = prompt.mask('Encryption passphrase:')
         if passphrase && passphrase.length < 8
           logger.error 'Passphrase must be at least 8 characters long'
@@ -167,80 +174,94 @@ module Nest
     def format(ashift: 9, keylocation: nil, passphrase: nil, fscache_size: '2G', swap_size: '4G')
       return false unless devices_ready?
 
-      vdev = whole_disk? ? disk : name
-      zroot = passphrase ? "#{poolname}/crypt" : poolname
+      if @use_ext4_root
+        logger.info 'Creating ext4 root filesystem'
+        cmd.run ADMIN + "mkfs.ext4 -q -L #{labelname} #{root_device}"
+        logger.success 'Created ext4 root filesystem'
+      else
+        vdev = whole_disk? ? disk : name
+        zroot = passphrase ? "#{poolname}/crypt" : poolname
 
-      logger.info "Creating ZFS pool '#{name}'"
-      cmd.run ADMIN + "zpool create -f -m none -o ashift=#{ashift} " \
-                      '-O compression=lz4 -O xattr=sa -O acltype=posixacl ' \
-                      "-R #{target} #{poolname} #{vdev}"
-      if passphrase
-        cmd.run(ADMIN + "zfs create -o encryption=aes-128-gcm -o keyformat=passphrase -o keylocation=prompt #{zroot}",
-                input: passphrase)
-        cmd.run(ADMIN + "zfs set keylocation=#{keylocation} #{zroot}") if keylocation
-      end
-      cmd.run ADMIN + "zfs create -o atime=off #{zroot}/ROOT"
-      cmd.run ADMIN + "zfs create -o mountpoint=/ #{zroot}/ROOT/A"
-      cmd.run ADMIN + "zfs create -o mountpoint=/var #{zroot}/ROOT/A/var"
-      cmd.run ADMIN + "zfs create -o mountpoint=/usr/lib/debug -o compression=zstd #{zroot}/ROOT/A/debug"
-      cmd.run ADMIN + "zfs create -o mountpoint=/usr/src -o compression=zstd #{zroot}/ROOT/A/src"
-      cmd.run ADMIN + "zfs create -o mountpoint=/home #{zroot}/home"
-      cmd.run ADMIN + "zfs create #{zroot}/home/joy"
-      cmd.run ADMIN + "zpool set bootfs=#{zroot}/ROOT/A #{poolname}"
-      logger.success "Created ZFS pool '#{name}'"
+        logger.info "Creating ZFS pool '#{name}'"
+        cmd.run ADMIN + "zpool create -f -m none -o ashift=#{ashift} " \
+                        '-O compression=lz4 -O xattr=sa -O acltype=posixacl ' \
+                        "-R #{target} #{poolname} #{vdev}"
+        if passphrase
+          cmd.run(ADMIN + "zfs create -o encryption=aes-128-gcm -o keyformat=passphrase -o keylocation=prompt #{zroot}",
+                  input: passphrase)
+          cmd.run(ADMIN + "zfs set keylocation=#{keylocation} #{zroot}") if keylocation
+        end
+        cmd.run ADMIN + "zfs create -o atime=off #{zroot}/ROOT"
+        cmd.run ADMIN + "zfs create -o mountpoint=/ #{zroot}/ROOT/A"
+        cmd.run ADMIN + "zfs create -o mountpoint=/var #{zroot}/ROOT/A/var"
+        cmd.run ADMIN + "zfs create -o mountpoint=/usr/lib/debug -o compression=zstd #{zroot}/ROOT/A/debug"
+        cmd.run ADMIN + "zfs create -o mountpoint=/usr/src -o compression=zstd #{zroot}/ROOT/A/src"
+        cmd.run ADMIN + "zfs create -o mountpoint=/home #{zroot}/home"
+        cmd.run ADMIN + "zfs create #{zroot}/home/joy"
+        cmd.run ADMIN + "zpool set bootfs=#{zroot}/ROOT/A #{poolname}"
+        logger.success "Created ZFS pool '#{name}'"
 
-      logger.info 'Creating swap space'
-      cmd.run ADMIN + "zfs create -V #{swap_size} -b 4096 -o refreservation=none #{zroot}/swap"
-      cmd.run 'udevadm settle'
-      cmd.run ADMIN + "mkswap -L #{labelname}-swap /dev/zvol/#{zroot}/swap"
-      logger.success 'Created swap space'
-
-      unless File.open("#{image}/etc/fstab").grep(/#{labelname}-fscache/).empty?
-        logger.info 'Creating fscache'
-        cmd.run ADMIN + "zfs create -V #{fscache_size} #{zroot}/fscache"
+        logger.info 'Creating swap space'
+        cmd.run ADMIN + "zfs create -V #{swap_size} -b 4096 -o refreservation=none #{zroot}/swap"
         cmd.run 'udevadm settle'
-        cmd.run ADMIN + "mkfs.ext4 -q -L #{labelname}-fscache /dev/zvol/#{zroot}/fscache"
-        cmd.run ADMIN + "tune2fs -o discard /dev/zvol/#{zroot}/fscache"
-        logger.success 'Created fscache'
+        cmd.run ADMIN + "mkswap -L #{labelname}-swap /dev/zvol/#{zroot}/swap"
+        logger.success 'Created swap space'
+
+        unless File.open("#{image}/etc/fstab").grep(/#{labelname}-fscache/).empty?
+          logger.info 'Creating fscache'
+          cmd.run ADMIN + "zfs create -V #{fscache_size} #{zroot}/fscache"
+          cmd.run 'udevadm settle'
+          cmd.run ADMIN + "mkfs.ext4 -q -L #{labelname}-fscache /dev/zvol/#{zroot}/fscache"
+          cmd.run ADMIN + "tune2fs -o discard /dev/zvol/#{zroot}/fscache"
+          logger.success 'Created fscache'
+        end
       end
 
       logger.info 'Creating boot filesystem'
-      if boot_fstype == 'vfat'
-        cmd.run ADMIN + "mkfs.vfat -n #{labelname}-bt #{boot_device}" # label <= 11 chars for FAT32
-      else
-        cmd.run ADMIN + "mkfs.#{boot_fstype} #{boot_device}"
-      end
+      cmd.run ADMIN + "mkfs.vfat -n #{labelname}-bt #{boot_device}" # label <= 11 chars for FAT32
       logger.success 'Created boot filesystem'
     end
 
     def mount(passphrase = nil)
       logger.info 'Mounting filesystems'
+      if @use_ext4_root
+        if target_mounted?
+          logger.info "Target '#{target}' is already mounted"
+        else
+          return false unless ensure_root_device_unmounted
 
-      if zpool_mounted?
-        logger.info "ZFS pool '#{name}' is already mounted"
+          cmd.run(ADMIN + "mkdir -p #{target}") unless Dir.exist? target
+          logger.info 'Mounting root device'
+          cmd.run ADMIN + "mount #{root_device} #{target}"
+          logger.success 'Mounted root device'
+        end
       else
-        if zpool_imported?
-          if force
-            logger.warn "Exporting ZFS pool '#{name}' to reimport it at #{target}"
-            cmd.run ADMIN + "zpool export #{poolname}"
-          else
-            logger.error "ZFS pool '#{name}' is imported but not mounted to #{target}"
-            logger.error "Export the pool or use '--force' to continue"
-            return false
+        if zpool_mounted?
+          logger.info "ZFS pool '#{name}' is already mounted"
+        else
+          if zpool_imported?
+            if force
+              logger.warn "Exporting ZFS pool '#{name}' to reimport it at #{target}"
+              cmd.run ADMIN + "zpool export #{poolname}"
+            else
+              logger.error "ZFS pool '#{name}' is imported but not mounted to #{target}"
+              logger.error "Export the pool or use '--force' to continue"
+              return false
+            end
           end
+
+          logger.info 'Importing ZFS pool'
+          cmd.run ADMIN + "zpool import -f -R #{target} #{poolname}"
+          cmd.run(ADMIN + "zfs load-key -r -L prompt #{poolname}/crypt", input: passphrase) if passphrase
+          cmd.run ADMIN + 'zfs mount -al' # rubocop:disable Style/StringConcatenation
+          logger.success 'Imported ZFS pool'
         end
 
-        logger.info 'Importing ZFS pool'
-        cmd.run ADMIN + "zpool import -f -R #{target} #{poolname}"
-        cmd.run(ADMIN + "zfs load-key -r -L prompt #{poolname}/crypt", input: passphrase) if passphrase
-        cmd.run ADMIN + 'zfs mount -al' # rubocop:disable Style/StringConcatenation
-        logger.success 'Imported ZFS pool'
-      end
-
-      unless $DRY_RUN || ensure_target_mounted
-        logger.error "Nothing is mounted at #{target}"
-        logger.error 'Is the ZFS pool encrypted?'
-        return false
+        unless $DRY_RUN || ensure_target_mounted
+          logger.error "Nothing is mounted at #{target}"
+          logger.error 'Is the ZFS pool encrypted?'
+          return false
+        end
       end
 
       if device_mounted?(boot_device, at: boot_dir)
@@ -272,10 +293,12 @@ module Nest
       logger.info 'Installing bootloader'
 
       # Write rpool fact so Puppet can configure ZFS datasets appropriately
-      facts_dir = File.join(target, 'etc/puppetlabs/facter/facts.d')
-      cmd.run ADMIN + "mkdir -p #{facts_dir}"
-      rpool_value = @encrypt ? "#{poolname}/crypt" : poolname
-      cmd.run(ADMIN + "tee #{File.join(facts_dir, 'rpool.txt')}", in: "rpool=#{rpool_value}\n")
+      if @installer
+        facts_dir = File.join(target, 'etc/puppetlabs/facter/facts.d')
+        cmd.run ADMIN + "mkdir -p #{facts_dir}"
+        rpool_value = @encrypt ? "#{poolname}/crypt" : poolname
+        cmd.run(ADMIN + "tee #{File.join(facts_dir, 'rpool.txt')}", in: "rpool=#{rpool_value}\n")
+      end
 
       puppet_cmd = 'puppet agent --test --tags boot'
       puppet_status = nspawn(target, puppet_cmd, directout: true)
@@ -307,6 +330,10 @@ module Nest
 
     protected
 
+    def boot_dir
+      "#{target}/boot"
+    end
+
     def ensure_device_unmounted(device, description)
       if device_mounted? device
         if force
@@ -319,6 +346,10 @@ module Nest
         end
       end
       true
+    end
+
+    def ensure_root_device_unmounted
+      ensure_device_unmounted(root_device, 'root device')
     end
 
     def ensure_target_mounted
@@ -346,22 +377,65 @@ module Nest
       name.length > 8 && name =~ /^(\D{,8}).*?(\d*)$/ ? $1[0..-$2.length - 1] + $2 : name # rubocop:disable Style/PerlBackrefs
     end
 
-    def target
-      "/mnt/#{name}"
-    end
-
-    def boot_dir
-      "#{target}/boot"
-    end
-
     def make_hybrid_mbr(disk)
       logger.warn 'Making the hybrid MBR!'
-      logger.warn 'See: https://gitlab.james.tl/nest/puppet/-/wikis/Platforms/Raspberry-Pi#hybrid-mbr'
+      logger.warn 'See: https://gitlab.joyfullee.me/nest/puppet/-/wikis/Platforms/Raspberry-Pi#hybrid-mbr'
       cmd.run ADMIN + "gdisk #{disk}", in: "r\nh\n1\nn\n0c\nn\nn\nw\ny\n"
       cmd.run 'udevadm settle'
     end
 
+    def target
+      "/mnt/#{name}"
+    end
+
     private
+
+    def boot_device
+      "/dev/disk/by-partlabel/#{name}-boot"
+    end
+
+    def device_mounted?(device, at: nil)
+      device = File.realpath(device) if File.exist?(device)
+      if at
+        `mount`.match?(/^#{device} on #{at}\s/)
+      else
+        `mount`.match?(/^#{device}\s/)
+      end
+    end
+
+    def devices_ready?
+      ensure_boot_device_unmounted & storage_ready?
+    end
+
+    def ensure_boot_device_unmounted
+      ensure_device_unmounted(boot_device, 'boot device')
+    end
+
+    def ext4_root_in_image?
+      begin
+        File.foreach("#{image}/etc/fstab") do |line|
+          next if line.strip.start_with?('#') || line.strip.empty?
+
+          # fstab columns: fs_spec fs_file fs_vfstype fs_mntops fs_freq fs_passno
+          cols = line.split(/\s+/)
+          next unless cols.length >= 2
+
+          fs_file = cols[1]
+          return true if fs_file == '/'
+        end
+      rescue Errno::ENOENT
+        raise "#{image}/etc/fstab not found; cannot determine root filesystem"
+      end
+      false
+    end
+
+    def poolname
+      @installer ? "#{name}-installer" : name
+    end
+
+    def root_device
+      "/dev/disk/by-partlabel/#{name}"
+    end
 
     def sfdisk(disk, script)
       cmd.run!(ADMIN + "wipefs -a #{disk}").success? or
@@ -387,29 +461,12 @@ module Nest
       true
     end
 
-    def boot_device
-      "/dev/disk/by-partlabel/#{name}-boot"
-    end
-
-    def boot_fstype
-      `awk '/^(PART)?LABEL=(#{name}-boot|#{labelname}-bt)\\s/ { print $3 }' #{image}/etc/fstab`.chomp
-    end
-
-    def ensure_boot_device_unmounted
-      ensure_device_unmounted(boot_device, 'boot device')
-    end
-
-    def device_mounted?(device, at: nil)
-      device = File.realpath(device) if File.exist?(device)
-      if at
-        `mount`.match?(/^#{device} on #{at}\s/)
+    def storage_ready?
+      if @use_ext4_root
+        ensure_root_device_unmounted
       else
-        `mount`.match?(/^#{device}\s/)
+        zpool_absent?
       end
-    end
-
-    def devices_ready?
-      ensure_boot_device_unmounted & zpool_absent?
     end
 
     def target_mounted?
@@ -443,10 +500,6 @@ module Nest
 
       altroot = `zpool get -H -o value altroot #{poolname}`.chomp
       altroot == target
-    end
-
-    def poolname
-      @installer ? "#{name}-installer" : name
     end
   end
 end
