@@ -4,6 +4,13 @@ module Nest
   class Installer
     # Platform installer overrides
     class RadxaZero < Installer
+      def partition(options = {})
+        pre_script = [
+          'first-lba: 4096' # U-Boot is ~3000 sectors long
+        ]
+        super(**options.merge(pre_script: pre_script))
+      end
+
       def format(options = {})
         super(**options.merge(swap_size: '8G'))
       end

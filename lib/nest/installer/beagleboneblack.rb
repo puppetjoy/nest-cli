@@ -6,7 +6,7 @@ module Nest
     class BeagleBoneBlack < Installer
       def partition(options = {})
         pre_script = [
-          'first-lba: 4096'
+          'first-lba: 4096' # U-Boot is ~3000 sectors long
         ]
         super(**options.merge(pre_script: pre_script))
       end
