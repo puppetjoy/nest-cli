@@ -128,23 +128,17 @@ module Nest
       steps.values[(steps.keys.index start)..(steps.keys.index stop)].drop_while(&:call).empty?
     end
 
-    def partition(pre_script: [])
+    def partition(pre_script: [], start: nil)
       return false unless devices_ready?
 
       script = StringIO.new
       script.puts 'label: gpt'
 
-      # Let platforms install their own extra partitions
+      # Let platforms define their own partitions and settings
       pre_script&.each { |line| script.puts line }
 
-      if boot_fstype == 'vfat'
-        # Let sfdisk pick an aligned start sector for the ESP.
-        script.puts "size=512MiB, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, name=\"#{name}-boot\""
-      else
-        # BIOS + /boot case, still letting sfdisk choose starts.
-        script.puts "size=30720, type=21686148-6449-6E6F-744E-656564454649, name=\"#{name}-bios\""
-        script.puts "size=512MiB, type=BC13C2FF-59E6-4262-A352-B275FD6F7172, name=\"#{name}-boot\""
-      end
+      start_prefix = start ? "start=#{start}, " : ''
+      script.puts start_prefix + "size=512MiB, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, name=\"#{name}-boot\""
 
       if boot
         logger.info "Partitioning #{boot}"

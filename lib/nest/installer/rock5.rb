@@ -4,6 +4,10 @@ module Nest
   class Installer
     # Platform installer overrides
     class Rock5 < Installer
+      def partition(options = {})
+        super(**options.merge(start: 32_768))
+      end
+
       def format(options = {})
         super(**options.merge(swap_size: '16G'))
       end

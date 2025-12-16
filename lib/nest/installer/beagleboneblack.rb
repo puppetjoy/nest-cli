@@ -5,10 +5,7 @@ module Nest
     # Platform installer overrides
     class BeagleBoneBlack < Installer
       def partition(options = {})
-        pre_script = [
-          'first-lba: 4096' # U-Boot is ~3000 sectors long
-        ]
-        super(**options.merge(pre_script: pre_script))
+        super(**options.merge(start: 4096))
       end
 
       def format(options = {})

@@ -4,6 +4,10 @@ module Nest
   class Installer
     # Platform installer overrides
     class RK3399 < Installer
+      def partition(options = {})
+        super(**options.merge(start: 32_768))
+      end
+
       def format(options = {})
         super(**options.merge(swap_size: '8G'))
       end
