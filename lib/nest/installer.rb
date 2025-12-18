@@ -373,8 +373,47 @@ module Nest
       end
     end
 
+    # Generate a label name <= 8 characters from hostname, prioritizing suffix after dash.
+    # Examples:
+    #   kestrel-console => kconsole
+    #   eagle-gui       => eaglegui
+    #   falcon-gui12    => falgui12
+    #   foobarbaz12     => foobar12
+    #   short           => short
     def labelname
-      name.length > 8 && name =~ /^(\D{,8}).*?(\d*)$/ ? $1[0..-$2.length - 1] + $2 : name # rubocop:disable Style/PerlBackrefs
+      return name if name.length <= 8
+
+      # Extract trailing digits
+      digits = name.match(/(\d+)$/)
+      digit_suffix = digits ? digits[1] : ''
+      base = digits ? name[0...-digit_suffix.length] : name
+
+      # If there's a dash, prioritize the suffix after the last dash
+      if base.include?('-')
+        parts = base.split('-')
+        prefix = parts[0]
+        suffix = parts[1..-1].join('-')
+
+        # Calculate how much space we have for the label
+        available = 8 - digit_suffix.length
+        return name if available <= 0
+
+        # Try to fit as much of the suffix as possible, then prefix
+        if suffix.length >= available
+          # Use only suffix if it fills or exceeds available space
+          suffix[0...available] + digit_suffix
+        else
+          # Use full suffix and as much prefix as fits
+          prefix_len = available - suffix.length
+          prefix[0...prefix_len] + suffix + digit_suffix
+        end
+      else
+        # No dash: use old logic (prefix + digits)
+        available = 8 - digit_suffix.length
+        return name if available <= 0
+
+        base[0...available] + digit_suffix
+      end
     end
 
     def make_hybrid_mbr(disk)
