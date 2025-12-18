@@ -14,7 +14,8 @@ module Nest
 
       def firmware
         logger.info 'Installing firmware'
-        cmd.run ADMIN + "dd if=#{image}/usr/src/u-boot/spl/u-boot-spl.bin.normal.out of=/dev/disk/by-partlabel/#{name}-spl"
+        cmd.run ADMIN + "dd if=#{image}/usr/src/u-boot/spl/u-boot-spl.bin.normal.out " \
+                        "of=/dev/disk/by-partlabel/#{name}-spl"
         cmd.run ADMIN + "dd if=#{image}/usr/src/u-boot/u-boot.itb of=/dev/disk/by-partlabel/#{name}-uboot"
         logger.success 'Installed firmware'
       end

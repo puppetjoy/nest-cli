@@ -392,7 +392,7 @@ module Nest
       if base.include?('-')
         parts = base.split('-')
         prefix = parts[0]
-        suffix = parts[1..-1].join('-')
+        suffix = parts[1..].join('-')
 
         # Calculate how much space we have for the label
         available = 8 - digit_suffix.length
