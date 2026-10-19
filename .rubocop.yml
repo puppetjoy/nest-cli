@@ -8,3 +8,12 @@ Metrics:
 
 Style/GlobalVars:
   Enabled: false
+
+# Native command APIs return success booleans; do not rename CLI operations.
+Naming/PredicateMethod:
+  Enabled: false
+
+# Existing installer code; unrelated to boot environment activation.
+Style/FileOpen:
+  Exclude:
+    - lib/nest/installer.rb

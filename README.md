@@ -56,6 +56,9 @@ updates [similar to Android](https://source.android.com/devices/tech/ota/ab).
 All of these commands accept a `--dry-run` argument to only print the changes
 that would be made.
 
+See [activation safety and quota recovery](docs/boot-environments.md) before
+selecting a clone for boot or recovering from a failed activation.
+
 ### Exec
 
 `nest exec` launches a command or shell (tmux session) inside of a Nest image
