@@ -1,0 +1,17 @@
+stages:
+  - test
+
+verify:
+  stage: test
+  image: ruby:3.3
+  tags:
+    - runner
+    - arm64
+  script:
+    - bundle config set --local path vendor/bundle
+    - bundle install
+    - bundle exec rake
+  artifacts:
+    when: always
+    paths:
+      - .rspec_status
