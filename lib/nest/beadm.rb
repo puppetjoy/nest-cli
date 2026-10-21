@@ -2,11 +2,14 @@
 
 require 'shellwords'
 require 'open3'
+require_relative 'command_failure'
 
 module Nest
   # Manage ZFS boot environments
   class Beadm
     include Nest::CLI
+
+    attr_reader :failure_exit_status
 
     def initialize
       roots = read_command('findmnt', '-rn', '-o', 'SOURCE', '--mountpoint', '/').lines.map(&:chomp)
@@ -20,7 +23,7 @@ module Nest
     end
 
     def list
-      `zfs list -H -o name -r #{@be_root}`.lines.reduce([]) do |bes, filesystem|
+      read_command('zfs', 'list', '-H', '-o', 'name', '-r', @be_root).lines.reduce([]) do |bes, filesystem|
         if filesystem.chomp =~ %r{^#{Regexp.escape(@be_root)}/([^/]+)$}
           bes << Regexp.last_match(1)
         else
@@ -34,7 +37,7 @@ module Nest
     end
 
     def active
-      bootfs = `zpool get -H -o value bootfs #{@zpool}`.chomp
+      bootfs = read_command('zpool', 'get', '-H', '-o', 'value', 'bootfs', @zpool).chomp
       bootfs =~ %r{^#{Regexp.escape(@be_root)}/([^/]+)$} or raise 'zpool bootfs does not look like a boot environment'
       Regexp.last_match(1)
     end
@@ -53,15 +56,15 @@ module Nest
       logger.info "Creating boot environment '#{name}' from '#{current}'"
 
       snapshot = "beadm-clone-#{current}-to-#{name}"
-      cmd.run!(ADMIN + "zfs snapshot -r #{@current_fs}@#{snapshot}").success? or
+      checked_command(ADMIN + "zfs snapshot -r #{@current_fs}@#{snapshot}").success? or
         raise 'Failed to create snapshots for cloning'
 
-      `zfs list -H -o name,compression,mountpoint -r #{@current_fs}`.lines.each do |line|
+      read_command('zfs', 'list', '-H', '-o', 'name,compression,mountpoint', '-r', @current_fs).lines.each do |line|
         (fs, compression, mp) = line.chomp.split("\t", 3)
         clone_fs = "#{@be_root}/#{name}#{fs.sub(/^#{Regexp.escape(@current_fs)}/, '')}"
         clone_cmd = ADMIN + "zfs clone -o canmount=noauto -o compression=#{compression} " \
                             "-o mountpoint=#{mp.shellescape} #{fs}@#{snapshot} #{clone_fs}"
-        if cmd.run!(clone_cmd).failure?
+        if checked_command(clone_cmd).failure?
           cmd.run! ADMIN + "zfs destroy -R #{@current_fs}@#{snapshot}"
           raise 'Failed to clone snapshot. Manual cleanup may be requried.'
         end
@@ -84,20 +87,21 @@ module Nest
 
       if name == active
         logger.warn 'Destroying the boot environment set to be active next boot'
-        activate(current)
+        return false unless activate(current)
       end
 
-      unmount(name)
+      return false unless unmount(name)
 
       logger.info "Destroying boot environment '#{name}'"
 
-      cmd.run!(ADMIN + "zfs destroy -r #{@be_root}/#{name}").success? or
+      checked_command(ADMIN + "zfs destroy -r #{@be_root}/#{name}").success? or
         raise 'Failed to destroy the boot environment'
 
-      `zfs list -H -o name -t snapshot -r #{@be_root}`.lines.map(&:chomp).each do |snapshot|
+      snapshots = read_command('zfs', 'list', '-H', '-o', 'name', '-t', 'snapshot', '-r', @be_root)
+      snapshots.lines.map(&:chomp).each do |snapshot|
         next unless snapshot =~ /@beadm-clone-(#{Regexp.escape(name)}-to-.*|.*-to-#{Regexp.escape(name)})$/
 
-        cmd.run!(ADMIN + "zfs destroy #{snapshot}").success? or
+        checked_command(ADMIN + "zfs destroy #{snapshot}").success? or
           raise 'Failed to destroy snapshot. Manual cleanup may be required.'
       end
 
@@ -111,7 +115,7 @@ module Nest
     def mount(name)
       mount_be = "#{@be_root}/#{name}"
 
-      zfs_list = `zfs list -H -o name,mountpoint -r #{mount_be.shellescape} 2>/dev/null`.lines
+      zfs_list = read_command('zfs', 'list', '-H', '-o', 'name,mountpoint', '-r', mount_be).lines
       filesystems = zfs_list.each_with_object({}) do |line, fss|
         (fs, mountpoint) = line.chomp.split("\t", 2)
         mountpoint = '' if mountpoint == '/'
@@ -124,7 +128,7 @@ module Nest
         return false
       end
 
-      mounted = `zfs mount`.lines.each_with_object({}) do |line, m|
+      mounted = read_command('zfs', 'mount').lines.each_with_object({}) do |line, m|
         (fs, mountpoint) = line.chomp.split(' ', 2)
         m[fs] = mountpoint
         m
@@ -142,18 +146,18 @@ module Nest
 
       logger.info "Mounting boot environment '#{name}' at /mnt/#{name}"
 
-      (Dir.exist?("/mnt/#{name}") || cmd.run!(ADMIN + "mkdir /mnt/#{name}").success?) or
+      (Dir.exist?("/mnt/#{name}") || checked_command(ADMIN + "mkdir /mnt/#{name}").success?) or
         raise "Failed to make /mnt/#{name}"
 
       filesystems.each do |fs, mountpoint|
-        next if cmd.run!(ADMIN + "mount -t zfs -o zfsutil #{fs} #{mountpoint}").success?
+        next if checked_command(ADMIN + "mount -t zfs -o zfsutil #{fs} #{mountpoint}").success?
 
         cmd.run! ADMIN + "umount -R /mnt/#{name}"
         cmd.run! ADMIN + "rmdir /mnt/#{name}"
         raise 'Failed to mount the boot environment. Manual cleanup may be required.'
       end
 
-      cmd.run!(ADMIN + "mount --bind /boot /mnt/#{name}/boot").success? or
+      checked_command(ADMIN + "mount --bind /boot /mnt/#{name}/boot").success? or
         raise 'Failed to bind mount /boot'
 
       logger.success "Mounted boot environment '#{name}' at /mnt/#{name}"
@@ -163,7 +167,7 @@ module Nest
     def unmount(name)
       unmount_be = "#{@be_root}/#{name}"
 
-      zfs_list = `zfs list -H -o name,mountpoint -r #{unmount_be.shellescape} 2>/dev/null`.lines
+      zfs_list = read_command('zfs', 'list', '-H', '-o', 'name,mountpoint', '-r', unmount_be).lines
       filesystems = zfs_list.each_with_object({}) do |line, fss|
         (fs, mountpoint) = line.chomp.split("\t", 2)
         mountpoint = '' if mountpoint == '/'
@@ -176,20 +180,25 @@ module Nest
         return false
       end
 
-      mounted = `zfs mount`.lines.each_with_object({}) do |line, m|
+      mounted = read_command('zfs', 'mount').lines.each_with_object({}) do |line, m|
         (fs, mountpoint) = line.chomp.split(' ', 2)
         m[fs] = mountpoint
         m
       end
 
-      if (filesystems.to_a & mounted.to_a).empty?
+      unless (filesystems.keys & mounted.keys).all? { |fs| filesystems[fs] == mounted[fs] }
+        raise 'Boot environment is mounted outside its expected /mnt path; refusing to unmount'
+      end
+
+      if (filesystems.keys & mounted.keys).empty?
         logger.info 'The boot environment is already unmounted'
         return true
       end
 
       logger.info "Unmounting boot environment '#{name}'"
 
-      if cmd.run!(ADMIN + "umount -R /mnt/#{name}").failure? || cmd.run!(ADMIN + "rmdir /mnt/#{name}").failure?
+      if checked_command(ADMIN + "umount -R /mnt/#{name}").failure? ||
+         checked_command(ADMIN + "rmdir /mnt/#{name}").failure?
         logger.error 'Failed to unmount the boot environment. Is something using it?'
         return false
       end
@@ -213,7 +222,7 @@ module Nest
         # Payload size and pool free space do not predict promotion quota use.
         promote_tree(trees, "#{@be_root}/#{name}")
 
-        (name == active || cmd.run!(ADMIN + "zpool set bootfs=#{@be_root}/#{name} #{@zpool}").success?) or
+        (name == active || checked_command(ADMIN + "zpool set bootfs=#{@be_root}/#{name} #{@zpool}").success?) or
           raise 'Failed to set zpool \'bootfs\' property'
 
         logger.success "Boot environment '#{name}' will be active next reboot"
@@ -227,7 +236,7 @@ module Nest
         trees.each do |fs, canmount, _origin|
           next unless in_tree?(fs, @current_fs) && canmount == 'noauto'
 
-          cmd.run!(ADMIN + "zfs set canmount=on #{fs.shellescape}").success? or
+          checked_command(ADMIN + "zfs set canmount=on #{fs.shellescape}").success? or
             raise "Failed to enable active boot environment dataset #{fs}"
         end
         promote_tree(trees, @current_fs)
@@ -239,9 +248,18 @@ module Nest
 
     private
 
+    def checked_command(command)
+      result = cmd.run!(command)
+      @failure_exit_status ||= result.exit_status if result.failure?
+      result
+    end
+
     def read_command(*args)
       output, status = Open3.capture2e(*args)
-      raise "Failed to read #{args.first}: #{output.strip}" unless status.success?
+      unless status.success?
+        @failure_exit_status ||= status.exitstatus
+        raise CommandFailure.new("read #{args.first}: #{output.strip}", status.exitstatus)
+      end
 
       output
     end
@@ -265,7 +283,7 @@ module Nest
     def disable_inactive(trees)
       failed = trees.each_with_object([]) do |(fs, canmount, _origin), errors|
         next if in_tree?(fs, @current_fs) || %w[off noauto].include?(canmount)
-        next if cmd.run!(ADMIN + "zfs set canmount=noauto #{fs.shellescape}").success?
+        next if checked_command(ADMIN + "zfs set canmount=noauto #{fs.shellescape}").success?
 
         errors << fs
       rescue StandardError => e
@@ -281,7 +299,7 @@ module Nest
 
       trees.each do |fs, _canmount, origin|
         next unless in_tree?(fs, tree) && origin != '-'
-        next if cmd.run!(ADMIN + "zfs promote #{fs.shellescape}").success?
+        next if checked_command(ADMIN + "zfs promote #{fs.shellescape}").success?
 
         raise "Failed to promote boot environment clone #{fs}; check quota and snapshot accounting before retrying"
       end

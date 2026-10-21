@@ -29,6 +29,8 @@ module Nest
 
       def update(start, stop, options = {})
         super(start, stop, options.merge({ boot_env: !(options[:kernel] || options[:firmware]) }))
+      rescue StandardError
+        false
       end
 
       protected
@@ -45,7 +47,8 @@ module Nest
         rsync_cmd   = "#{rsync} --delete #{filters} --inplace --itemize-changes --progress " \
                       "root@falcon:#{installer.image}/ #{dir}"
 
-        cmd.run(ADMIN + "zsh -c #{rsync_cmd.shellescape}", out: '/dev/stdout', err: '/dev/stderr')
+        result = cmd.run!(ADMIN + "zsh -c #{rsync_cmd.shellescape}", out: command_output, err: '/dev/stderr')
+        check_status(:root, result.exit_status)
       end
 
       def kernel
@@ -57,7 +60,7 @@ module Nest
       end
 
       def firmware
-        logger.info "firmware -> #{dir}"
+        raise 'Firmware reset is not implemented; no firmware was updated'
       end
 
       private
@@ -72,24 +75,29 @@ module Nest
 
       def kernel_src
         dest = File.join(dir, '/usr/src/linux')
-        cmd.run(ADMIN + "#{rsync} --delete --inplace " \
-                        "--itemize-changes --progress root@falcon:'#{installer.image}/usr/src/linux/' #{dest}",
-                out: '/dev/stdout', err: '/dev/stderr')
+        command = "#{rsync} --delete --inplace " \
+                  "--itemize-changes --progress root@falcon:'#{installer.image}/usr/src/linux/' #{dest}"
+        result = cmd.run!(ADMIN + command, out: command_output, err: '/dev/stderr')
+        check_status(:source, result.exit_status)
       end
 
       def kernel_modules
-        current_modules = File.basename Dir["#{installer.image}/lib/modules/*"].first
+        modules = Dir["#{installer.image}/lib/modules/*"]
+        raise 'Expected exactly one Stage 3 module directory' unless modules.size == 1
+
+        current_modules = File.basename(modules.first)
         dest = File.join(dir, '/lib/modules')
-        cmd.run(ADMIN + "#{rsync} --delete -f 'R #{current_modules}/**' -f 'P **' --inplace " \
-                        "--itemize-changes --progress root@falcon:#{installer.image}/lib/modules/ #{dest}",
-                out: '/dev/stdout', err: '/dev/stderr')
+        command = "#{rsync} --delete -f 'R #{current_modules}/**' -f 'P **' --inplace " \
+                  "--itemize-changes --progress root@falcon:#{installer.image}/lib/modules/ #{dest}"
+        result = cmd.run!(ADMIN + command, out: command_output, err: '/dev/stderr')
+        check_status(:modules, result.exit_status)
       end
 
       def kernel_install
         args = options[:noop] ? ' --noop' : ''
         status = run("FACTER_force_kernel_install=1 puppet agent --test --tags kernel#{args}",
                      directout: true)
-        raise 'Failed to install kernel' unless [0, 2].include? status
+        check_status(:puppet, status, [0, 2])
 
         reload_kexec
 
