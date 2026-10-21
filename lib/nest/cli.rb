@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'thor'
+require_relative 'command_failure'
 
 module Nest
   # Command line interfaces built with Thor
@@ -310,7 +311,11 @@ module Nest
         exit SYSTEM_ERROR
       end
 
-      desc 'reset [options]', 'Reset hosts from Stage 3'
+      desc 'reset [status|report ID] [options]', 'Reset hosts from Stage 3 or observe a persisted transaction'
+      option :transaction, type: :string, desc: 'Create a durable host preparation transaction'
+      option :resume_transaction, type: :string, desc: 'Resume the exact persisted transaction; never repeat backup'
+      option :release, type: :string, desc: 'Immutable release identity (sha256 digest)'
+      option :root_generation, type: :string, desc: 'Canonical read-only local ZFS root generation mount'
       option :kernel, aliases: '-k', type: :boolean, desc: 'Just update the kernel'
       option :firmware, aliases: '-f', type: :boolean, desc: 'Just update the firmware'
       option :resume, aliases: '-r', type: :boolean, desc: 'Skip backup step'
@@ -335,7 +340,7 @@ module Nest
         \x5* activate (default stop)
         \x5* firmware
       LONGDESC
-      def reset
+      def reset(action = nil, id = nil)
         cli_init
         if options[:format] == 'json'
           $QUIET = true
@@ -360,11 +365,22 @@ module Nest
           stop  = options[:end] == 'activate' && options[:test] ? :sync : options[:end]
         end
 
+        return reset_transaction(action, id) if action || options[:transaction] || options[:resume_transaction]
+        if !options[:plan] && (options[:release] || options[:root_generation])
+          raise 'Release/root generation require --transaction or --plan'
+        end
+
         require_relative 'reset_plan'
         Nest::ResetPlan.steps(start.to_sym, stop.to_sym)
         warn Nest::ResetPlan::RESUME_WARNING if options[:resume] && options[:format] != 'json'
         if options[:plan]
           report = Nest::ResetPlan.new.call(start.to_sym, stop.to_sym, options)
+          if options[:release] || options[:root_generation]
+            require_relative 'update_transaction'
+            report[:transaction_preflight] = Nest::UpdateTransaction.new.plan(
+              release: options[:release], root_generation: options[:root_generation]
+            )
+          end
           success = report[:observation_success]
         else
           require_relative 'updater/rsync'
@@ -394,6 +410,37 @@ module Nest
           logger.error(e.message)
         end
         exit SYSTEM_ERROR
+      end
+
+      no_commands do
+        def reset_transaction(action, id)
+          require_relative 'update_transaction'
+          require 'json'
+          incompatible = %i[resume kernel firmware step noop test dry_run].any? { |flag| options[flag] }
+          incompatible ||= options[:begin] != 'backup' || options[:end] != 'activate'
+          raise 'Transaction commands cannot be combined with legacy phase/dry-run options' if incompatible
+          if options[:transaction] && options[:resume_transaction]
+            raise 'Choose --transaction or --resume-transaction, not both'
+          end
+
+          transaction = Nest::UpdateTransaction.new
+          if action
+            raise 'Expected reset status ID or reset report ID' unless %w[status report].include?(action) && id
+            raise 'Observation cannot prepare a transaction' if options[:transaction] || options[:resume_transaction]
+
+            report = action == 'status' ? transaction.status(id) : transaction.export(id)
+            success = true
+          else
+            raise 'Use reset --plan --release DIGEST --root-generation PATH without a transaction ID' if options[:plan]
+
+            report = transaction.prepare(options[:transaction] || options[:resume_transaction],
+                                         release: options[:release], root_generation: options[:root_generation],
+                                         resume: !options[:resume_transaction].nil?)
+            success = report.fetch('success')
+          end
+          puts(options[:format] == 'json' ? JSON.generate(report) : JSON.pretty_generate(report))
+          exit USER_ERROR unless success
+        end
       end
 
       desc 'version', 'Print the version of this tool and exit'
