@@ -8,8 +8,11 @@ verify:
     - runner
     - arm64
   script:
+    - apt-get update && apt-get install -y --no-install-recommends rsync zsh
     - bundle config set --local path vendor/bundle
     - bundle install
+    - mkdir -p "$HOME/nest-cli-test-tmp" && chmod 700 "$HOME/nest-cli-test-tmp"
+    - export TMPDIR="$HOME/nest-cli-test-tmp"
     - bundle exec rake
   artifacts:
     when: always

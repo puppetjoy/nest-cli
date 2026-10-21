@@ -9,9 +9,7 @@ module Nest
 
     attr_reader :name, :image, :platform, :role, :boot, :disk, :force
 
-    def self.for_host(name)
-      image = "/nest/hosts/#{name}"
-
+    def self.for_host(name, image: "/nest/hosts/#{name}")
       FileTest.symlink? "#{image}/etc/portage/make.profile" or
         raise "Stage 3 image at #{image} does not exist"
 

@@ -1,0 +1,266 @@
+# frozen_string_literal: true
+
+require 'time'
+require 'digest'
+require_relative 'update_store'
+require_relative 'update_observation'
+
+module Nest
+  # A native prepare transaction. Reboot, acceptance and cleanup are not implicit.
+  class UpdateTransaction
+    PHASES = %w[backup mount sync kernel unmount activate].freeze
+    attr_reader :record
+
+    def initialize(store: UpdateStore.new(UpdateObservation::STATE), observation: UpdateObservation.new)
+      @store = store
+      @observation = observation
+    end
+
+    def plan(release:, root_generation:)
+      @store.validate!
+      raise 'Release must be an immutable sha256 digest' unless release&.match?(/\Asha256:[0-9a-f]{64}\z/)
+      raise 'Root generation is required' unless root_generation.is_a?(String)
+
+      { 'shared_state' => @observation.shared_state(@store.path), 'host' => @observation.host,
+        'source' => @observation.source(root_generation, release), 'policy' => @observation.policy,
+        'read_only' => true, 'capacity_admission' => 'unknown' }
+    end
+
+    def prepare(id, release:, root_generation:, resume: false, updater: nil)
+      @store.id!(id)
+      @store.validate!
+      shared = @observation.shared_state(@store.path)
+      @store.lock do
+        @record = resume ? load_record(id) : create_record(id, release, root_generation, shared)
+        validate_resume!(release, root_generation, shared)
+        updater ||= native_updater
+        PHASES.each do |phase|
+          next if record.fetch('phases').any? { |row| row['phase'] == phase && row['state'] == 'complete' }
+
+          execute_phase(phase, updater)
+          return report unless record.fetch('phases').last['state'] == 'complete'
+        end
+        record['state'] = 'prepared'
+        save
+        report
+      end
+    end
+
+    # No lock creation, no write, and changed boots are observations, not retries.
+    def status(id)
+      @record = load_record(id)
+      observed = bound_host!
+      baseline = record.fetch('host')
+
+      known_current = observed['current'] == baseline['current'] && observed['current_tree'] == baseline['current_tree']
+      known_target = observed['current'] == baseline['target'] && observed['current_tree'] == record['target_tree']
+      raise 'Observed current BE identity mismatch' unless known_current || known_target
+      if record['target_tree'] && @observation.tree(baseline.fetch('target')) != record['target_tree']
+        raise 'Observed target BE identity mismatch'
+      end
+
+      report.merge('observation' => {
+                     'boot_id' => observed.fetch('boot_id'),
+                     'boot_changed' => observed.fetch('boot_id') != baseline.fetch('boot_id'),
+                     'current' => observed.fetch('current'), 'next_boot' => observed.fetch('next_boot'),
+                     'expected_target_booted' => record['target_tree'] &&
+                       observed['current'] == baseline['target'] && observed['current_tree'] == record['target_tree'],
+                     'accepted' => false
+                   })
+    end
+
+    # Historical reports remain exportable after later updates replace a BE.
+    # This checks the host/state binding, not whether old BEs are still present.
+    def export(id)
+      @record = load_record(id)
+      bound_host!
+      report
+    end
+
+    def report
+      # Allowlisted projection only: never command output, exceptions, keys or environment.
+      { 'schema' => 1, 'kind' => 'reset_transaction_report', 'id' => record.fetch('id'),
+        'state' => record.fetch('state'), 'success' => record['state'] == 'prepared',
+        'release' => record.fetch('release'),
+        'source' => record.fetch('source').slice('path', 'dataset', 'guid', 'creation_txg', 'release'),
+        'host' => record.fetch('host').slice('hostname', 'boot_id', 'pool_guid', 'current', 'current_tree',
+                                             'alternate_tree', 'target', 'next_boot'),
+        'host_identity_sha256' => Digest::SHA256.hexdigest(record.fetch('host').fetch('machine_id')),
+        'shared_state' => record.fetch('shared_state').slice('dataset', 'guid', 'pool_guid'),
+        'target_tree' => record['target_tree'],
+        'policy' => record.fetch('policy').slice('filter_sha256', 'cli_sha256'),
+        'created_at' => record.fetch('created_at'),
+        'updated_at' => record.fetch('updated_at'), 'phases' => record.fetch('phases').map do |row|
+          row.slice('phase', 'state', 'attempt', 'started_at', 'finished_at', 'boot_id', 'native_exit', 'commands')
+        end,
+        'reboot_requested' => false, 'accepted' => false, 'finalized' => false }
+    end
+
+    private
+
+    def bound_host!
+      shared = @observation.shared_state(@store.path)
+      raise 'Shared state identity mismatch' unless shared == record.fetch('shared_state')
+
+      observed = @observation.host
+      baseline = record.fetch('host')
+      raise 'Host or pool identity mismatch' unless %w[machine_id hostname pool_guid].all? do |key|
+        observed[key] == baseline[key]
+      end
+
+      observed
+    end
+
+    def load_record(id)
+      data = @store.read(id)
+      raise 'Invalid transaction record' unless data['schema'] == 1 && data['kind'] == 'reset_transaction' &&
+                                                data['id'] == id && %w[pending stopped prepared].include?(data['state'])
+
+      rows = data.fetch('phases')
+      raise 'Invalid phase receipts' unless rows.is_a?(Array) && rows.size <= PHASES.size &&
+                                            rows.map { |row| row['phase'] } == PHASES.take(rows.size) &&
+                                            rows.all? { |row| %w[started failed complete].include?(row['state']) } &&
+                                            rows[0...-1].all? { |row| row['state'] == 'complete' }
+      raise 'Incomplete prepared receipt' if data['state'] == 'prepared' &&
+                                             (rows.size != PHASES.size || rows.last['state'] != 'complete')
+
+      raise 'Invalid release identity' unless data.fetch('release').match?(/\Asha256:[0-9a-f]{64}\z/)
+
+      %w[host source shared_state policy].each do |key|
+        raise 'Invalid transaction binding' unless data[key].is_a?(Hash) && !data[key].empty?
+      end
+      rows.each do |row|
+        unless row['attempt'].is_a?(Integer) && row['attempt'].positive? && row['boot_id'] == data['host']['boot_id']
+          raise 'Invalid phase attempt binding'
+        end
+
+        Time.iso8601(row.fetch('started_at'))
+        next if row['state'] == 'started'
+
+        Time.iso8601(row.fetch('finished_at'))
+        raise 'Missing checked command outcomes' unless row['commands'].is_a?(Array)
+        if row['state'] == 'complete' && row['commands'].any? { |command| command['success'] != true }
+          raise 'Completed phase contains a failed command'
+        end
+      end
+      if rows.any? { |row| row['phase'] == 'backup' && row['state'] == 'complete' } && !data['target_tree'].is_a?(Array)
+        raise 'Missing post-backup target identity'
+      end
+
+      data
+    end
+
+    def create_record(id, release, root_generation, shared)
+      raise 'Release must be an immutable sha256 digest' unless release&.match?(/\Asha256:[0-9a-f]{64}\z/)
+      raise 'Root generation is required' unless root_generation.is_a?(String)
+      raise 'Transaction ID already exists; use --resume-transaction' if @store.ids.include?(id)
+
+      @store.ids.each do |other|
+        raise 'An unresolved host transaction exists; inspect status, never replace its receipt' unless
+          load_record(other)['state'] == 'prepared'
+      end
+      host = @observation.host
+      raise 'Current BE must be selected for next boot before preparation' unless host['next_boot'] == host['current']
+
+      @observation.target_unmounted!(host.fetch('target'))
+      source = @observation.source(root_generation, release)
+      { 'schema' => 1, 'kind' => 'reset_transaction', 'id' => id, 'state' => 'pending',
+        'release' => release, 'source' => source, 'host' => host, 'shared_state' => shared,
+        'policy' => @observation.policy, 'target_tree' => nil, 'phases' => [], 'created_at' => now }
+    end
+
+    def validate_resume!(release, root_generation, shared)
+      raise 'Release mismatch' if release && release != record.fetch('release')
+      raise 'Root generation mismatch' if root_generation && root_generation != record.fetch('source').fetch('path')
+      raise 'Shared state identity mismatch' unless shared == record.fetch('shared_state')
+
+      validate_identity!
+      last = record.fetch('phases').last
+      return unless last && last['state'] != 'complete'
+      return if last['phase'] == 'sync'
+
+      raise "Ambiguous or failed #{last['phase']} boundary; observation and manual recovery required, never replay"
+    end
+
+    def validate_identity!
+      unless @observation.shared_state(@store.path) == record.fetch('shared_state')
+        raise 'Shared state identity changed'
+      end
+
+      observed = @observation.host
+      baseline = record.fetch('host')
+      raise 'Host, boot, pool or current BE identity mismatch' unless
+        %w[machine_id hostname boot_id pool_guid current current_tree target].all? do |key|
+          observed[key] == baseline[key]
+        end
+
+      expected_next = if record.fetch('phases').any? { |p| p['phase'] == 'activate' && p['state'] == 'complete' }
+                        baseline.fetch('target')
+                      else
+                        baseline.fetch('current')
+                      end
+      raise 'Next boot selection changed; inspect before continuing' unless observed['next_boot'] == expected_next
+      raise 'Immutable root generation changed' unless
+        @observation.source(record.fetch('source').fetch('path'), record.fetch('release')) == record.fetch('source')
+      raise 'Reset policy or installed CLI changed' unless @observation.policy == record.fetch('policy')
+      if !record['target_tree'] && observed['alternate_tree'] != baseline['alternate_tree']
+        raise 'Preexisting alternate identity changed'
+      end
+      return unless record['target_tree']
+      return if @observation.tree(baseline.fetch('target')) == record.fetch('target_tree')
+
+      raise 'Alternate identity changed'
+    end
+
+    def execute_phase(phase, updater)
+      validate_identity!
+      target = record.fetch('host').fetch('target')
+      @observation.target_unmounted!(target) if phase == 'backup'
+      @observation.copy_target!(target, record.fetch('target_tree')) if %w[sync kernel].include?(phase)
+      previous = record.fetch('phases').last
+      attempt = previous && previous['phase'] == phase ? record.fetch('phases').pop.fetch('attempt') + 1 : 1
+      receipt = { 'phase' => phase, 'state' => 'started', 'attempt' => attempt,
+                  'started_at' => now, 'boot_id' => record.fetch('host').fetch('boot_id') }
+      record.fetch('phases') << receipt
+      record['state'] = 'pending'
+      save # Must be durable BEFORE the first native side effect.
+      success = updater.update(phase.to_sym, phase.to_sym,
+                               root_generation: record.fetch('source').fetch('path'), format: 'json')
+      result = updater.report
+      receipt['commands'] = result.fetch(:commands).map do |command|
+        { 'operation' => command.fetch(:operation).to_s, 'native_exit' => command[:native_exit],
+          'success' => command.fetch(:success) }
+      end
+      receipt['native_exit'] = result[:native_exit]
+      record['target_tree'] = @observation.tree(target) if phase == 'backup' && success
+      # A lost completion receipt, or failed postcondition, leaves a started phase.
+      if success
+        @observation.copy_target!(target, record.fetch('target_tree')) if phase == 'mount'
+        @observation.target_unmounted!(target) if phase == 'unmount'
+        if (phase == 'activate') && @observation.host.fetch('next_boot') != target
+          raise 'Activation did not select the target'
+        end
+        raise 'Immutable root generation changed during phase' unless
+          @observation.source(record.fetch('source').fetch('path'), record.fetch('release')) == record.fetch('source')
+      end
+      receipt['state'] = success ? 'complete' : 'failed'
+      receipt['finished_at'] = now
+      record['state'] = 'stopped' unless success
+      save
+    end
+
+    def native_updater
+      require_relative 'updater/rsync'
+      Updater::Rsync.new(root_generation: record.fetch('source').fetch('path'))
+    end
+
+    def save
+      record['updated_at'] = now
+      @store.write(record.fetch('id'), record)
+    end
+
+    def now
+      Time.now.utc.iso8601(6)
+    end
+  end
+end

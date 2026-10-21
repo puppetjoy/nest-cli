@@ -11,8 +11,12 @@ module Nest
     class Rsync < Updater
       attr_reader :installer
 
-      def initialize
-        @installer = Nest::Installer.for_host(Socket.gethostname)
+      def initialize(root_generation: nil)
+        @installer = if root_generation
+                       Nest::Installer.for_host(Socket.gethostname, image: root_generation)
+                     else
+                       Nest::Installer.for_host(Socket.gethostname)
+                     end
 
         steps = {
           backup: -> { backup },
@@ -41,11 +45,13 @@ module Nest
         test_filter = options[:test] ? '--filter=\'merge /etc/nest/reset-test-filter.rules\' ' : ''
         main_filter = '--filter=\'merge /etc/nest/reset-filter.rules\' '
         keep_awk    = '/\/\.keep_/ { sub(/\.keep_\S*/, "**"); print "P", $2 }'
-        keep_cmd    = "awk #{keep_awk.shellescape} #{installer.image}/var/db/pkg/*/*/CONTENTS | sort -u"
+        keep_cmd    = "awk #{keep_awk.shellescape} #{installer.image.shellescape}/var/db/pkg/*/*/CONTENTS | sort -u"
         keep_filter = "--filter=merge\\ <(#{keep_cmd})"
         filters     = "#{test_filter}#{main_filter}#{keep_filter}"
-        rsync_cmd   = "#{rsync} --delete #{filters} --inplace --itemize-changes --progress " \
-                      "root@falcon:#{installer.image}/ #{dir}"
+        protection = options[:root_generation] ? "--exclude='/boot/***' --exclude='/var/lib/nest/updates/***' " : ''
+        inplace = options[:root_generation] ? '--checksum' : '--inplace'
+        rsync_cmd = "#{rsync} --delete #{protection}#{filters} #{inplace} --itemize-changes --progress " \
+                    "#{copy_source('/')} #{dir}"
 
         result = cmd.run!(ADMIN + "zsh -c #{rsync_cmd.shellescape}", out: command_output, err: '/dev/stderr')
         check_status(:root, result.exit_status)
@@ -65,6 +71,11 @@ module Nest
 
       private
 
+      def copy_source(suffix)
+        path = "#{installer.image}#{suffix}"
+        options[:root_generation] ? path.shellescape : "root@falcon:#{path}"
+      end
+
       def rsync
         command = 'rsync -aAHX'
         command += 'n' if options[:noop] || options[:test]
@@ -76,7 +87,7 @@ module Nest
       def kernel_src
         dest = File.join(dir, '/usr/src/linux')
         command = "#{rsync} --delete --inplace " \
-                  "--itemize-changes --progress root@falcon:'#{installer.image}/usr/src/linux/' #{dest}"
+                  "--itemize-changes --progress #{copy_source('/usr/src/linux/')} #{dest}"
         result = cmd.run!(ADMIN + command, out: command_output, err: '/dev/stderr')
         check_status(:source, result.exit_status)
       end
@@ -88,7 +99,7 @@ module Nest
         current_modules = File.basename(modules.first)
         dest = File.join(dir, '/lib/modules')
         command = "#{rsync} --delete -f 'R #{current_modules}/**' -f 'P **' --inplace " \
-                  "--itemize-changes --progress root@falcon:#{installer.image}/lib/modules/ #{dest}"
+                  "--itemize-changes --progress #{copy_source('/lib/modules/')} #{dest}"
         result = cmd.run!(ADMIN + command, out: command_output, err: '/dev/stderr')
         check_status(:modules, result.exit_status)
       end
