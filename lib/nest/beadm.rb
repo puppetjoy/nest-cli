@@ -101,13 +101,8 @@ module Nest
       checked_command(ADMIN + "zfs destroy -r #{@be_root}/#{name}").success? or
         raise 'Failed to destroy the boot environment'
 
-      snapshots = read_command('zfs', 'list', '-H', '-o', 'name', '-t', 'snapshot', '-r', @be_root)
-      snapshots.lines.map(&:chomp).each do |snapshot|
-        next unless snapshot =~ /@beadm-clone-(#{Regexp.escape(name)}-to-.*|.*-to-#{Regexp.escape(name)})$/
-
-        checked_command(ADMIN + "zfs destroy #{snapshot}").success? or
-          raise 'Failed to destroy snapshot. Manual cleanup may be required.'
-      end
+      # External clone origins may be shared or renamed. Names do not prove
+      # ownership or retirement eligibility; retain them for explicit policy.
 
       (!Dir.exist?("/mnt/#{name}") || cmd.run!(ADMIN + "rmdir /mnt/#{name}").success?) or
         logger.warn "/mnt/#{name} exists and couldn't be removed"

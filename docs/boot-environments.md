@@ -78,6 +78,8 @@ silently reselects bootfs to enable deletion. A deliberate manual caller must
 select its intended safe next boot first. The library-only `reselect_next: true`
 keyword retains the old explicit compatibility path, not automated cleanup.
 Failed unmount stops destroy with the checked native failure retained.
+External clone-origin snapshots are not retired by matching their names; shared
+or ambiguous origins remain for a separately explicit snapshot policy.
 
 ## Regression coverage
 

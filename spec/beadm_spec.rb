@@ -287,6 +287,12 @@ RSpec.describe Nest::Beadm do
     expect(commands).to be_empty
   end
 
+  it 'does not discover or retire external clone-origin snapshots by a guessed name' do
+    expect(beadm.destroy('C')).to be(true)
+    expect(commands.grep(/destroy/)).to eq(["zfs destroy -r #{root}/C"])
+    expect(commands.grep(/bootfs=/)).to be_empty
+  end
+
   it 'rejects failed mount inventory instead of calling the environment already unmounted' do
     allow(Open3).to receive(:capture2e)
       .with('zfs', 'mount')

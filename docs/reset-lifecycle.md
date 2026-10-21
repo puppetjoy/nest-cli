@@ -160,7 +160,9 @@ manual CLI. Select the intended safe next boot explicitly before a manual destro
 The library-only `reselect_next: true` preserves the former manual compatibility
 path for deliberate callers, not the automated cleanup path. Checked failed
 unmount already stopped destroy on accepted main; that regression and its native
-exit remain covered. No activation-safety floor is weakened.
+exit remain covered. Native destroy no longer scans and retires external clone
+origin snapshots by a guessed name either. Those ambiguous/shared origins remain
+for separately authorized retention policy. No activation-safety floor is weakened.
 
 ## Verification and remaining integration
 
