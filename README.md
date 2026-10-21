@@ -165,10 +165,15 @@ or `--end` options, run in the following order:
 
 `nest reset` resets this host from its Stage 3 image.
 
+Use `nest reset --plan --format=json` for genuinely read-only observation, not
+`--noop` or `--test`. See [checked reset results and planning](docs/reset.md) for
+the supported schema, legacy resume limitations, capacity unknowns, and installed
+source verification with `nest version --format=json`.
+
 | Options                         | Description                                                          |
 |---------------------------------|----------------------------------------------------------------------|
 | `-k`, `--kernel`                | Just update the kernel                                               |
-| `-f`, `--firmware`              | Just update the firmware                                             |
+| `-f`, `--firmware`              | Reserved; fails explicitly because firmware reset is unimplemented    |
 | `-r`, `--resume`                | Skip the backup step                                                 |
 | `-s STEP`, `--step=STEP`        | Only run this update step                                            |
 | `--begin=STEP`                  | The first update step to run (default: `backup`)                     |
@@ -179,6 +184,8 @@ or `--end` options, run in the following order:
 | `--debug`                       | Print additional information, such as the input provided to commands |
 | `--dry-run`                     | Only print actions that would modify the system                      |
 | `-t`, `--test`                  | Test rsync with checksums instead of times                           |
+| `--plan`                       | Read-only plan and capacity observation; no reset mutation            |
+| `--format=human\|json`          | Human default or schema 1 JSON output                                |
 
 The steps are self explanatory and, unless specified with `--step`, `--begin`,
 or `--end` options, run in the following order:

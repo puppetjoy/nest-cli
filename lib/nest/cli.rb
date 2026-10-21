@@ -320,6 +320,8 @@ module Nest
       option :noop, aliases: '-n', type: :boolean, desc: 'Run destructive commands in no-op mode'
       option :verbose, aliases: '-v', type: :boolean, desc: 'Run commands with extra verbosity'
       option :test, aliases: '-t', type: :boolean, desc: 'Test rsync with checksums instead of times'
+      option :plan, type: :boolean, desc: 'Read-only reset and capacity observation; never prepares a reset'
+      option :format, enum: %w[human json], default: 'human', desc: 'Output format'
       long_desc <<-LONGDESC
         Reset this host from its Stage 3 image.
 
@@ -335,6 +337,11 @@ module Nest
       LONGDESC
       def reset
         cli_init
+        if options[:format] == 'json'
+          $QUIET = true
+          $command = nil
+          $logger = nil
+        end
 
         if options[:kernel] && options[:firmware]
           start = :kernel
@@ -353,25 +360,54 @@ module Nest
           stop  = options[:end] == 'activate' && options[:test] ? :sync : options[:end]
         end
 
-        require_relative 'updater/rsync'
-        updater = Nest::Updater::Rsync.new
-        updater.update(start.to_sym,
-                       stop.to_sym,
-                       options) or exit USER_ERROR
-      rescue RuntimeError => e
-        logger.error(e.message)
-        exit USER_ERROR
+        require_relative 'reset_plan'
+        Nest::ResetPlan.steps(start.to_sym, stop.to_sym)
+        warn Nest::ResetPlan::RESUME_WARNING if options[:resume] && options[:format] != 'json'
+        if options[:plan]
+          report = Nest::ResetPlan.new.call(start.to_sym, stop.to_sym, options)
+          success = report[:observation_success]
+        else
+          require_relative 'updater/rsync'
+          updater = Nest::Updater::Rsync.new
+          success = updater.update(start.to_sym, stop.to_sym, options)
+          report = updater.report.merge(source_identity: Nest::SourceIdentity.to_h,
+                                        warnings: options[:resume] ? [Nest::ResetPlan::RESUME_WARNING] : [])
+        end
+        if options[:format] == 'json'
+          require 'json'
+          puts JSON.generate(report)
+        elsif options[:plan]
+          require 'json'
+          puts JSON.pretty_generate(report)
+        elsif !success
+          logger.error("Reset failed at #{report[:failed_phase]}: #{report[:error]} " \
+                       "(native exit: #{report[:native_exit] || 'unknown'})")
+        end
+        exit USER_ERROR unless success
       rescue StandardError => e
-        logger.fatal('Error:', e)
+        if options[:format] == 'json'
+          require 'json'
+          puts JSON.generate(schema: 1, kind: options[:plan] ? 'reset_plan' : 'reset_result',
+                             success: false, error: e.message, failed_phase: 'initialization',
+                             native_exit: e.is_a?(Nest::CommandFailure) ? e.exit_status : nil)
+        else
+          logger.error(e.message)
+        end
         exit SYSTEM_ERROR
       end
 
       desc 'version', 'Print the version of this tool and exit'
+      option :format, enum: %w[human json], default: 'human', desc: 'Include source content identity in JSON'
       map '--version' => 'version'
       map '-v' => 'version'
       def version
-        require_relative 'version'
-        puts "Nest CLI v#{Nest::VERSION}"
+        require_relative 'source_identity'
+        if options[:format] == 'json'
+          require 'json'
+          puts JSON.generate(Nest::SourceIdentity.to_h)
+        else
+          puts "Nest CLI v#{Nest::VERSION}"
+        end
       end
 
       def self.exit_on_failure?

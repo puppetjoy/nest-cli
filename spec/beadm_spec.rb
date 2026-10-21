@@ -52,6 +52,14 @@ RSpec.describe Nest::Beadm do
                  "#{current_fs}\n"
                when ['zfs', 'list', '-H', '-t', 'filesystem', '-o', 'name,canmount,origin', '-r', root]
                  inventory
+               when ['zfs', 'list', '-H', '-o', 'name', '-r', root]
+                 "#{filesystems.keys.join("\n")}\n"
+               when ['zpool', 'get', '-H', '-o', 'value', 'bootfs', 'tank']
+                 bootfs
+               when ['zfs', 'list', '-H', '-o', 'name,mountpoint', '-r', "#{root}/C"]
+                 "#{root}/C\t/\n#{root}/C/var\t/var\n"
+               when %w[zfs mount]
+                 "#{root}/C /mnt/C\n#{root}/C/var /mnt/C/var\n"
                else
                  raise "Unexpected read: #{args.inspect}"
                end
@@ -76,7 +84,7 @@ RSpec.describe Nest::Beadm do
       elsif success && command =~ /^zfs promote (\S+)$/
         filesystems.fetch(Regexp.last_match(1))[1] = '-'
       end
-      double(success?: success, failure?: !success)
+      double(success?: success, failure?: !success, exit_status: success ? 0 : 1)
     end
   end
 
@@ -233,7 +241,7 @@ RSpec.describe Nest::Beadm do
   it 'rejects failed root discovery without falling back to another dataset' do
     allow(Open3).to receive(:capture2e)
       .with('findmnt', '-rn', '-o', 'SOURCE', '--mountpoint', '/')
-      .and_return(['cannot read mounts', double(success?: false)])
+      .and_return(['cannot read mounts', double(success?: false, exitstatus: 1)])
     expect { beadm }.to raise_error(/cannot read mounts/)
     expect(commands).to be_empty
   end
@@ -241,7 +249,7 @@ RSpec.describe Nest::Beadm do
   it 'rejects failed filesystem enumeration without reporting successful activation' do
     allow(Open3).to receive(:capture2e)
       .with('zfs', 'list', '-H', '-t', 'filesystem', '-o', 'name,canmount,origin', '-r', root)
-      .and_return(['cannot list datasets', double(success?: false)])
+      .and_return(['cannot list datasets', double(success?: false, exitstatus: 1)])
     expect { beadm.activate }.to raise_error(/cannot list datasets/)
     expect(commands).to be_empty
   end
@@ -249,6 +257,45 @@ RSpec.describe Nest::Beadm do
   it 'rejects an incomplete inventory before any mutation' do
     filesystems.delete(current_fs)
     expect { beadm.activate }.to raise_error(/incomplete/)
+    expect(commands).to be_empty
+  end
+
+  it 'retains the native promotion failure after the inactive-safety sweep' do
+    filesystems.fetch("#{root}/C")[1] = "#{current_fs}@same-name"
+    failures << %r{^zfs promote #{root}/C$}
+    expect { beadm.activate('C') }.to raise_error(/promote/)
+    expect(beadm.failure_exit_status).to eq(1)
+    expect_inactive_safe
+    expect(commands.grep(/bootfs=/)).to be_empty
+  end
+
+  it 'checks the actual unmount result and does not remove the mount directory on failure' do
+    failures << %r{^umount -R /mnt/C$}
+    expect(beadm.unmount('C')).to be(false)
+    expect(beadm.failure_exit_status).to eq(1)
+    expect(commands).to eq(['umount -R /mnt/C'])
+  end
+
+  it 'does not destroy rollback data after an actual unmount failure' do
+    failures << %r{^umount -R /mnt/C$}
+    expect(beadm.destroy('C')).to be(false)
+    expect(commands.grep(/destroy/)).to be_empty
+  end
+
+  it 'rejects failed mount inventory instead of calling the environment already unmounted' do
+    allow(Open3).to receive(:capture2e)
+      .with('zfs', 'mount')
+      .and_return(['unavailable', double(success?: false, exitstatus: 8)])
+    expect { beadm.unmount('C') }.to raise_error(/unavailable/)
+    expect(beadm.failure_exit_status).to eq(8)
+    expect(commands).to be_empty
+  end
+
+  it 'refuses to call a tree mounted outside /mnt unmounted' do
+    allow(Open3).to receive(:capture2e)
+      .with('zfs', 'mount')
+      .and_return(["#{root}/C /\n", double(success?: true)])
+    expect { beadm.unmount('C') }.to raise_error(/outside/)
     expect(commands).to be_empty
   end
 end

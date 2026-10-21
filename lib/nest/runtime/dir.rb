@@ -74,7 +74,8 @@ module Nest
         if $DRY_RUN || options[:pretty]
           # Use tty-command for pretty dry-run output
           runner = options[:runner] || cmd
-          cmdopts = options[:directout] ? { out: '/dev/stdout', err: '/dev/stderr' } : {}
+          output = options[:directout] == :stderr ? '/dev/stderr' : '/dev/stdout'
+          cmdopts = options[:directout] ? { out: output, err: '/dev/stderr' } : {}
           runner.run!(*nspawn_cmd, cmdopts).exit_status
         else
           # Avoid tty-command for pty accesss
