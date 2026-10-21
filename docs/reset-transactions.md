@@ -4,8 +4,10 @@ This is the R02 / CLI R10 preparation and report slice. It wraps the native
 backup, mount, sync, kernel, unmount and activation phases with a host lock and
 write-ahead receipts. It does not make ZFS promotion, rsync, shared `/boot` or
 Puppet atomic, undo a partially completed phase, or implement fleet rollout.
-Reboot, host acceptance, transaction abandonment and R04 finalize are not
-supported commands in this slice. A prepared host is not a booted/accepted host.
+Reboot and transaction abandonment are not supported commands. Explicit supplied
+host acceptance and R04 finalization are documented in [reset-lifecycle.md](reset-lifecycle.md).
+A prepared host is not a booted/accepted host. Schema-1 details below remain the
+historical preparation/export contract; only explicit acceptance advances to schema 2.
 
 ## Supported commands
 
@@ -166,8 +168,9 @@ result records `failed` and stops. Completed phases are skipped on resume.
   necessarily alive. `stopped` means a checked native phase returned failure.
   `prepared` means all six preparation receipts exist; it is not postboot
   acceptance. On status, changed boot ID and the expected target GUID tree are
-  observations only. Reboot-request, acceptance and finalize receipts from a
-  future schema are rejected rather than interpreted or replayed.
+  observations only. Reboot-request or lifecycle entries in preparation `phases`
+  are rejected rather than replayed; explicit schema-2 lifecycle receipts live
+  outside that phase list, as documented in [reset-lifecycle.md](reset-lifecycle.md).
 
 Receipts are atomic; native effects are not. There is no automatic quota change,
 rollback deletion, admission rehearsal, restore or reboot. Existing activation
@@ -201,9 +204,9 @@ Export kind is `reset_transaction_report`, schema 1. It projects those safe
 bindings, phases and timestamps; excludes raw machine ID, replaces it with
 `host_identity_sha256`, and omits command output, exception text, environment,
 keys, journals, package CONTENTS and backup payloads. `success` means only state
-`prepared`. `reboot_requested`, `accepted` and `finalized` are false because this
-CLI implements none of those actions, not proof that an external actor has never
-requested a reboot. Status adds `observation` with observed `boot_id`,
+`prepared`. For schema 1, `reboot_requested`, `accepted` and `finalized` remain
+false; explicit acceptance transitions to schema 2. A false reboot flag is not
+proof that an external actor never requested a reboot. Status adds `observation` with observed `boot_id`,
 `boot_changed`, `current`, `next_boot`, `expected_target_booted` and
 `accepted: false`. The stored prepare outcome remains separate from observation.
 
@@ -242,6 +245,7 @@ create datasets, snapshots or fixture pools on user storage.
 
 These are source/fixture proofs, not an actual ZFS A/B switch or live reset
 certification. Package/install parity, shared-state/source provisioning, real
-boot/mount ordering, approved canary reset/reboot and R04 cleanup remain parent
-integration/following phases. Do not deploy or mutate a real host to make these
+boot/mount ordering and approved canary reset/reboot/cleanup remain parent
+integration/following phases. R04 source interfaces are in [reset-lifecycle.md](reset-lifecycle.md).
+Do not deploy or mutate a real host to make these
 unit tests pass.

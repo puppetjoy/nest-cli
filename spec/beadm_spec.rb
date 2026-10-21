@@ -282,6 +282,11 @@ RSpec.describe Nest::Beadm do
     expect(commands.grep(/destroy/)).to be_empty
   end
 
+  it 'refuses next-boot deletion without any activation, unmount or destroy commands' do
+    expect(beadm.destroy('B')).to be(false)
+    expect(commands).to be_empty
+  end
+
   it 'rejects failed mount inventory instead of calling the environment already unmounted' do
     allow(Open3).to receive(:capture2e)
       .with('zfs', 'mount')

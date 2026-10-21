@@ -74,7 +74,7 @@ module Nest
       true
     end
 
-    def destroy(name)
+    def destroy(name, reselect_next: false)
       if name == current
         logger.error 'Cannot destroy the current boot environment'
         return false
@@ -86,6 +86,10 @@ module Nest
       end
 
       if name == active
+        unless reselect_next
+          logger.error 'Cannot destroy the next-boot environment; explicitly select a safe boot environment first'
+          return false
+        end
         logger.warn 'Destroying the boot environment set to be active next boot'
         return false unless activate(current)
       end

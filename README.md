@@ -170,6 +170,12 @@ Use `nest reset --plan --format=json` for genuinely read-only observation, not
 the supported schema, legacy resume limitations, capacity unknowns, and installed
 source verification with `nest version --format=json`.
 
+Persisted preparation and historical reports are described in
+[reset transactions](docs/reset-transactions.md). Explicit supplied acceptance
+and `nest reset finalize ID --cleanup=owned --plan` are described in
+[accepted lifecycle and collector schema](docs/reset-lifecycle.md). These interfaces
+require preprovisioned shared state and do not themselves reboot or certify a host.
+
 | Options                         | Description                                                          |
 |---------------------------------|----------------------------------------------------------------------|
 | `-k`, `--kernel`                | Just update the kernel                                               |

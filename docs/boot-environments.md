@@ -63,6 +63,22 @@ BE datasets/properties or run another activation. Promotion is a preparation
 operation, not a read-only capacity probe and not an atomic multi-dataset
 transaction. Later policy/storage changes can still make a subsequent boot fail.
 
+## Accepted reset finalization and destroy policy
+
+`nest reset accept ID --evidence FILE` and
+`nest reset finalize ID --cleanup=owned [--plan]` implement the small explicit
+postboot lifecycle described in [reset-lifecycle.md](reset-lifecycle.md), including
+the parent collector's bounded JSON schema. Preparation alone is not acceptance.
+Ordinary A/B finalization keeps both trees and deletes nothing; no historical
+extra is adopted by its name. Snapshot origins remain retained and BE removal
+does not establish physical reclamation.
+
+`nest beadm destroy NAME` refuses current and next-boot environments. It never
+silently reselects bootfs to enable deletion. A deliberate manual caller must
+select its intended safe next boot first. The library-only `reselect_next: true`
+keyword retains the old explicit compatibility path, not automated cleanup.
+Failed unmount stops destroy with the checked native failure retained.
+
 ## Regression coverage
 
 `bundle exec rake` runs RSpec and RuboCop. BE regressions use a stateful fake ZFS

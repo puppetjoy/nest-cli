@@ -4,10 +4,13 @@ require 'time'
 require 'digest'
 require_relative 'update_store'
 require_relative 'update_observation'
+require_relative 'update_lifecycle'
 
 module Nest
   # A native prepare transaction. Reboot, acceptance and cleanup are not implicit.
   class UpdateTransaction
+    include UpdateLifecycle
+
     PHASES = %w[backup mount sync kernel unmount activate].freeze
     attr_reader :record
 
@@ -65,7 +68,8 @@ module Nest
                      'current' => observed.fetch('current'), 'next_boot' => observed.fetch('next_boot'),
                      'expected_target_booted' => record['target_tree'] &&
                        observed['current'] == baseline['target'] && observed['current_tree'] == record['target_tree'],
-                     'accepted' => false
+                     'accepted' => record['schema'] == 2 &&
+                       observed['boot_id'] == record.fetch('acceptance').fetch('boot_id')
                    })
     end
 
@@ -79,21 +83,29 @@ module Nest
 
     def report
       # Allowlisted projection only: never command output, exceptions, keys or environment.
-      { 'schema' => 1, 'kind' => 'reset_transaction_report', 'id' => record.fetch('id'),
-        'state' => record.fetch('state'), 'success' => record['state'] == 'prepared',
-        'release' => record.fetch('release'),
-        'source' => record.fetch('source').slice('path', 'dataset', 'guid', 'creation_txg', 'release'),
-        'host' => record.fetch('host').slice('hostname', 'boot_id', 'pool_guid', 'current', 'current_tree',
-                                             'alternate_tree', 'target', 'next_boot'),
-        'host_identity_sha256' => Digest::SHA256.hexdigest(record.fetch('host').fetch('machine_id')),
-        'shared_state' => record.fetch('shared_state').slice('dataset', 'guid', 'pool_guid'),
-        'target_tree' => record['target_tree'],
-        'policy' => record.fetch('policy').slice('filter_sha256', 'cli_sha256'),
-        'created_at' => record.fetch('created_at'),
-        'updated_at' => record.fetch('updated_at'), 'phases' => record.fetch('phases').map do |row|
-          row.slice('phase', 'state', 'attempt', 'started_at', 'finished_at', 'boot_id', 'native_exit', 'commands')
-        end,
-        'reboot_requested' => false, 'accepted' => false, 'finalized' => false }
+      phases = record.fetch('phases').map do |row|
+        row.slice('phase', 'state', 'attempt', 'started_at', 'finished_at', 'boot_id', 'native_exit', 'commands')
+      end
+      prepared = %w[prepared accepted finalizing finalized].include?(record['state'])
+      result = { 'schema' => record.fetch('schema'), 'kind' => 'reset_transaction_report', 'id' => record.fetch('id'),
+                 'state' => record.fetch('state'), 'success' => prepared,
+                 'release' => record.fetch('release'),
+                 'source' => record.fetch('source').slice('path', 'dataset', 'guid', 'creation_txg', 'release'),
+                 'host' => record.fetch('host').slice('hostname', 'boot_id', 'pool_guid', 'current', 'current_tree',
+                                                      'alternate_tree', 'target', 'next_boot'),
+                 'host_identity_sha256' => Digest::SHA256.hexdigest(record.fetch('host').fetch('machine_id')),
+                 'shared_state' => record.fetch('shared_state').slice('dataset', 'guid', 'pool_guid'),
+                 'target_tree' => record['target_tree'],
+                 'policy' => record.fetch('policy').slice('filter_sha256', 'cli_sha256'),
+                 'created_at' => record.fetch('created_at'),
+                 'updated_at' => record.fetch('updated_at'), 'phases' => phases,
+                 'reboot_requested' => false, 'accepted' => record['schema'] == 2,
+                 'finalized' => record['state'] == 'finalized' }
+      if record['schema'] == 2
+        result.merge!(record.slice('acceptance', 'owned_candidates', 'cleanup_receipts', 'finalized_at'))
+        result['snapshot_policy'] = 'retain_origins_no_reclamation_claim'
+      end
+      result
     end
 
     private
@@ -113,15 +125,20 @@ module Nest
 
     def load_record(id)
       data = @store.read(id)
-      raise 'Invalid transaction record' unless data['schema'] == 1 && data['kind'] == 'reset_transaction' &&
-                                                data['id'] == id && %w[pending stopped prepared].include?(data['state'])
+      states = %w[pending stopped prepared accepted finalizing finalized]
+      unless [1, 2].include?(data['schema']) && data['kind'] == 'reset_transaction' &&
+             data['id'] == id && states.include?(data['state'])
+        raise 'Invalid transaction record'
+      end
+
+      validate_lifecycle!(data)
 
       rows = data.fetch('phases')
       raise 'Invalid phase receipts' unless rows.is_a?(Array) && rows.size <= PHASES.size &&
                                             rows.map { |row| row['phase'] } == PHASES.take(rows.size) &&
                                             rows.all? { |row| %w[started failed complete].include?(row['state']) } &&
                                             rows[0...-1].all? { |row| row['state'] == 'complete' }
-      raise 'Incomplete prepared receipt' if data['state'] == 'prepared' &&
+      raise 'Incomplete prepared receipt' if %w[prepared accepted finalizing finalized].include?(data['state']) &&
                                              (rows.size != PHASES.size || rows.last['state'] != 'complete')
 
       raise 'Invalid release identity' unless data.fetch('release').match?(/\Asha256:[0-9a-f]{64}\z/)
@@ -155,11 +172,20 @@ module Nest
       raise 'Root generation is required' unless root_generation.is_a?(String)
       raise 'Transaction ID already exists; use --resume-transaction' if @store.ids.include?(id)
 
-      @store.ids.each do |other|
+      previous = @store.ids.map do |other|
+        loaded = load_record(other)
         raise 'An unresolved host transaction exists; inspect status, never replace its receipt' unless
-          load_record(other)['state'] == 'prepared'
+          loaded['state'] == 'finalized'
+
+        loaded
       end
       host = @observation.host
+      unless previous.empty?
+        @record = previous.max_by { |entry| entry.fetch('finalized_at') }
+        accepted = accepted_host!
+        raise 'Previous acceptance boot changed before next preparation' unless
+          accepted['boot_id'] == record.fetch('acceptance').fetch('boot_id')
+      end
       raise 'Current BE must be selected for next boot before preparation' unless host['next_boot'] == host['current']
 
       @observation.target_unmounted!(host.fetch('target'))
@@ -170,6 +196,7 @@ module Nest
     end
 
     def validate_resume!(release, root_generation, shared)
+      raise 'Accepted transactions cannot resume preparation' unless record['schema'] == 1
       raise 'Release mismatch' if release && release != record.fetch('release')
       raise 'Root generation mismatch' if root_generation && root_generation != record.fetch('source').fetch('path')
       raise 'Shared state identity mismatch' unless shared == record.fetch('shared_state')

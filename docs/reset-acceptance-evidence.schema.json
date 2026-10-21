@@ -1,0 +1,486 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "kind",
+    "transaction_id",
+    "release",
+    "observed_boot_id",
+    "host_identity_sha256",
+    "pool_guid",
+    "shared_state",
+    "target_tree",
+    "evidence_ref",
+    "evidence_sha256",
+    "gates"
+  ],
+  "properties": {
+    "schema": {
+      "const": 1
+    },
+    "kind": {
+      "const": "reset_acceptance_evidence"
+    },
+    "transaction_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$"
+    },
+    "release": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "observed_boot_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "host_identity_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "pool_guid": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*$"
+    },
+    "shared_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dataset",
+        "guid",
+        "pool_guid"
+      ],
+      "properties": {
+        "dataset": {
+          "type": "string",
+          "minLength": 1
+        },
+        "guid": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$"
+        },
+        "pool_guid": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$"
+        }
+      }
+    },
+    "target_tree": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "dataset",
+          "guid",
+          "mountpoint"
+        ],
+        "properties": {
+          "dataset": {
+            "type": "string",
+            "minLength": 1
+          },
+          "guid": {
+            "type": "string",
+            "pattern": "^[1-9][0-9]*$"
+          },
+          "mountpoint": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "evidence_ref": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,255}$"
+    },
+    "evidence_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kernel",
+        "root_var",
+        "pools",
+        "network_dns_trust",
+        "normal_main_apply",
+        "converged_repeat",
+        "system_failures",
+        "user_managers",
+        "service_canaries"
+      ],
+      "properties": {
+        "kernel": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "result",
+            "evidence_ref",
+            "evidence_sha256"
+          ],
+          "properties": {
+            "result": {
+              "const": "pass"
+            },
+            "evidence_ref": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,255}$"
+            },
+            "evidence_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        },
+        "root_var": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "result",
+            "evidence_ref",
+            "evidence_sha256"
+          ],
+          "properties": {
+            "result": {
+              "const": "pass"
+            },
+            "evidence_ref": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,255}$"
+            },
+            "evidence_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        },
+        "pools": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "result",
+            "evidence_ref",
+            "evidence_sha256"
+          ],
+          "properties": {
+            "result": {
+              "const": "pass"
+            },
+            "evidence_ref": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,255}$"
+            },
+            "evidence_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        },
+        "network_dns_trust": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "result",
+            "evidence_ref",
+            "evidence_sha256"
+          ],
+          "properties": {
+            "result": {
+              "const": "pass"
+            },
+            "evidence_ref": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,255}$"
+            },
+            "evidence_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        },
+        "normal_main_apply": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "result",
+            "evidence_ref",
+            "evidence_sha256",
+            "native_exit"
+          ],
+          "properties": {
+            "result": {
+              "const": "pass"
+            },
+            "evidence_ref": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,255}$"
+            },
+            "evidence_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "native_exit": {
+              "type": "integer",
+              "enum": [
+                0,
+                2
+              ]
+            }
+          }
+        },
+        "converged_repeat": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "result",
+            "evidence_ref",
+            "evidence_sha256",
+            "native_exit"
+          ],
+          "properties": {
+            "result": {
+              "const": "pass"
+            },
+            "evidence_ref": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,255}$"
+            },
+            "evidence_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "native_exit": {
+              "type": "integer",
+              "enum": [
+                0
+              ]
+            }
+          }
+        },
+        "system_failures": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "result",
+            "evidence_ref",
+            "evidence_sha256",
+            "availability",
+            "inventory_complete",
+            "failures"
+          ],
+          "properties": {
+            "result": {
+              "const": "pass"
+            },
+            "evidence_ref": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,255}$"
+            },
+            "evidence_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "availability": {
+              "const": "available"
+            },
+            "inventory_complete": {
+              "const": true
+            },
+            "failures": {
+              "type": "array",
+              "maxItems": 128,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "identity",
+                  "disposition",
+                  "evidence_ref",
+                  "evidence_sha256"
+                ],
+                "properties": {
+                  "identity": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[a-zA-Z0-9_@.:-]{1,128}$"
+                  },
+                  "disposition": {
+                    "const": "explained_historical"
+                  },
+                  "evidence_ref": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,255}$"
+                  },
+                  "evidence_sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "user_managers": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "result",
+            "evidence_ref",
+            "evidence_sha256",
+            "availability",
+            "inventory_complete",
+            "failures",
+            "managers"
+          ],
+          "properties": {
+            "result": {
+              "const": "pass"
+            },
+            "evidence_ref": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,255}$"
+            },
+            "evidence_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "availability": {
+              "const": "available"
+            },
+            "inventory_complete": {
+              "const": true
+            },
+            "failures": {
+              "type": "array",
+              "maxItems": 128,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "identity",
+                  "disposition",
+                  "evidence_ref",
+                  "evidence_sha256"
+                ],
+                "properties": {
+                  "identity": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[a-zA-Z0-9_@.:-]{1,128}$"
+                  },
+                  "disposition": {
+                    "const": "explained_historical"
+                  },
+                  "evidence_ref": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,255}$"
+                  },
+                  "evidence_sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                }
+              }
+            },
+            "managers": {
+              "type": "array",
+              "maxItems": 128,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "identity",
+                  "availability",
+                  "result",
+                  "evidence_ref",
+                  "evidence_sha256"
+                ],
+                "properties": {
+                  "identity": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[a-zA-Z0-9_@.:-]{1,128}$"
+                  },
+                  "availability": {
+                    "const": "available"
+                  },
+                  "result": {
+                    "const": "pass"
+                  },
+                  "evidence_ref": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,255}$"
+                  },
+                  "evidence_sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "service_canaries": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "result",
+            "evidence_ref",
+            "evidence_sha256"
+          ],
+          "properties": {
+            "result": {
+              "const": "pass"
+            },
+            "evidence_ref": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256,
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,255}$"
+            },
+            "evidence_sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          }
+        }
+      }
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Nest reset supplied acceptance evidence v1",
+  "$comment": "UTF-8 JSON <= 65536 bytes. In addition to shape validation: all bindings equal receipt/current observation, changed boot, distinct catalog references, unique manager identities. Digests refer to collector-retained evidence, not signed CLI verification."
+}
