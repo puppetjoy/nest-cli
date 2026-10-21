@@ -311,7 +311,9 @@ module Nest
         exit SYSTEM_ERROR
       end
 
-      desc 'reset [status|report ID] [options]', 'Reset hosts from Stage 3 or observe a persisted transaction'
+      desc 'reset [status|report|accept|finalize ID] [options]', 'Reset hosts or manage a persisted transaction'
+      option :evidence, type: :string, desc: 'Bounded acceptance-evidence JSON file, for accept only'
+      option :cleanup, type: :string, desc: 'Explicit owned cleanup policy, for finalize only'
       option :transaction, type: :string, desc: 'Create a durable host preparation transaction'
       option :resume_transaction, type: :string, desc: 'Resume the exact persisted transaction; never repeat backup'
       option :release, type: :string, desc: 'Immutable release identity (sha256 digest)'
@@ -366,6 +368,7 @@ module Nest
         end
 
         return reset_transaction(action, id) if action || options[:transaction] || options[:resume_transaction]
+        raise 'Evidence/cleanup require reset accept/finalize ID' if options[:evidence] || options[:cleanup]
         if !options[:plan] && (options[:release] || options[:root_generation])
           raise 'Release/root generation require --transaction or --plan'
         end
@@ -425,12 +428,29 @@ module Nest
 
           transaction = Nest::UpdateTransaction.new
           if action
-            raise 'Expected reset status ID or reset report ID' unless %w[status report].include?(action) && id
-            raise 'Observation cannot prepare a transaction' if options[:transaction] || options[:resume_transaction]
+            unless %w[status report accept finalize].include?(action) && id
+              raise 'Expected reset status/report/accept/finalize ID'
+            end
 
-            report = action == 'status' ? transaction.status(id) : transaction.export(id)
+            raise 'Observation cannot prepare a transaction' if options[:transaction] || options[:resume_transaction]
+            raise 'Lifecycle commands use recorded release/source' if options[:release] || options[:root_generation]
+            raise '--plan is only supported for finalize' if options[:plan] && action != 'finalize'
+            raise '--evidence is only supported for accept' if options[:evidence] && action != 'accept'
+            raise '--cleanup is only supported for finalize' if options[:cleanup] && action != 'finalize'
+
+            report = case action
+                     when 'status' then transaction.status(id)
+                     when 'report' then transaction.export(id)
+                     when 'accept'
+                       raise 'Accept requires --evidence FILE' unless options[:evidence]
+
+                       transaction.accept(id, evidence: Nest::AcceptanceEvidence.read(options[:evidence]))
+                     when 'finalize'
+                       transaction.finalize(id, cleanup: options[:cleanup], plan: options[:plan])
+                     end
             success = true
           else
+            raise 'Evidence/cleanup require reset accept/finalize ID' if options[:evidence] || options[:cleanup]
             raise 'Use reset --plan --release DIGEST --root-generation PATH without a transaction ID' if options[:plan]
 
             report = transaction.prepare(options[:transaction] || options[:resume_transaction],

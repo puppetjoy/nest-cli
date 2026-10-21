@@ -1,0 +1,87 @@
+{
+  "schema": 1,
+  "kind": "reset_acceptance_evidence",
+  "transaction_id": "cycle",
+  "release": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "observed_boot_id": "boot-two",
+  "host_identity_sha256": "352302489bc2fcf025cf00cda8308033f97ac87712ce90b4d7cd72c58e4c3af9",
+  "pool_guid": "101",
+  "shared_state": {
+    "dataset": "fixture/updates",
+    "guid": "401",
+    "pool_guid": "101"
+  },
+  "target_tree": [
+    {
+      "dataset": "fixture/ROOT/B",
+      "guid": "501",
+      "mountpoint": "/"
+    }
+  ],
+  "evidence_ref": "fixture/acceptance",
+  "evidence_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "gates": {
+    "kernel": {
+      "result": "pass",
+      "evidence_ref": "fixture/kernel",
+      "evidence_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "root_var": {
+      "result": "pass",
+      "evidence_ref": "fixture/root_var",
+      "evidence_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "pools": {
+      "result": "pass",
+      "evidence_ref": "fixture/pools",
+      "evidence_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "network_dns_trust": {
+      "result": "pass",
+      "evidence_ref": "fixture/network_dns_trust",
+      "evidence_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    "normal_main_apply": {
+      "result": "pass",
+      "evidence_ref": "fixture/normal_main_apply",
+      "evidence_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "native_exit": 2
+    },
+    "converged_repeat": {
+      "result": "pass",
+      "evidence_ref": "fixture/converged_repeat",
+      "evidence_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "native_exit": 0
+    },
+    "system_failures": {
+      "result": "pass",
+      "evidence_ref": "fixture/system_failures",
+      "evidence_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "availability": "available",
+      "inventory_complete": true,
+      "failures": []
+    },
+    "user_managers": {
+      "result": "pass",
+      "evidence_ref": "fixture/user_managers",
+      "evidence_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "availability": "available",
+      "inventory_complete": true,
+      "failures": [],
+      "managers": [
+        {
+          "identity": "user-1000",
+          "availability": "available",
+          "result": "pass",
+          "evidence_ref": "fixture/user-1000",
+          "evidence_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        }
+      ]
+    },
+    "service_canaries": {
+      "result": "pass",
+      "evidence_ref": "fixture/service_canaries",
+      "evidence_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  }
+}

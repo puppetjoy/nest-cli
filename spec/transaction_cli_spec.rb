@@ -39,6 +39,24 @@ RSpec.describe 'transaction Thor interface' do
     end.to output("#{JSON.generate(report)}\n").to_stdout
   end
 
+  it 'routes acceptance evidence through the real Thor parser' do
+    expect(Nest::AcceptanceEvidence).to receive(:read).with('/collector.json').and_return('fixture')
+    expect(transaction).to receive(:accept).with('cycle', evidence: 'fixture').and_return(report)
+    expect do
+      Nest::CLI::Main.start(['reset', 'accept', 'cycle', '--evidence=/collector.json', '--format=json'])
+    end.to output("#{JSON.generate(report)}\n").to_stdout
+  end
+
+  it 'routes finalize and its read-only plan through the real Thor parser' do
+    [false, true].each do |plan|
+      expect(transaction).to receive(:finalize).with('cycle', cleanup: 'owned',
+                                                              plan: plan ? true : nil).and_return(report)
+      args = ['reset', 'finalize', 'cycle', '--cleanup=owned', '--format=json']
+      args << '--plan' if plan
+      expect { Nest::CLI::Main.start(args) }.to output("#{JSON.generate(report)}\n").to_stdout
+    end
+  end
+
   %w[--resume --kernel --firmware --step=sync --begin=mount --noop --test --dry-run --plan].each do |flag|
     it "refuses transaction preparation combined with #{flag}" do
       expect(transaction).not_to receive(:prepare)

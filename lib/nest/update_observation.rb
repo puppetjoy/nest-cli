@@ -136,6 +136,38 @@ module Nest
         'creation_txg' => property(dataset, 'createtxg'), 'release' => release }
     end
 
+    # Enumerate the pool so missing is not confused with a failed targeted read.
+    def cleanup_tree(dataset, expected)
+      inventory = tree(dataset.split('/').first)
+      rows = inventory.select { |row| row['dataset'] == dataset || row['dataset'].start_with?("#{dataset}/") }
+      ids = expected.map { |row| row.fetch('guid') }
+      if inventory.any? { |row| ids.include?(row['guid']) && !rows.include?(row) }
+        raise 'Owned cleanup GUID moved outside recorded tree'
+      end
+
+      rows.empty? ? nil : rows
+    end
+
+    def cleanup_safe!(dataset)
+      target_unmounted!(dataset)
+      tree(dataset).each do |row|
+        raise 'Cleanup descendant is mounted' unless property(row.fetch('dataset'), 'mounted') == 'no'
+      end
+      # Refuse all candidate-local snapshots, including held/dependent ones.
+      # Shared/ambiguous origins outside this tree are retained, never followed.
+      snapshots = read('zfs', 'list', '-Hp', '-r', '-t', 'snapshot', '-o', 'name', dataset)
+      raise 'Cleanup snapshots may be held or dependent; retain for separate policy' unless snapshots.empty?
+    end
+
+    def destroy_owned!(dataset, expected, host:)
+      raise 'Owned cleanup identity changed before mutation' unless cleanup_tree(dataset, expected) == expected
+
+      cleanup_safe!(dataset)
+      raise 'Boot selection or host changed immediately before deletion' unless self.host == host
+
+      read('zfs', 'destroy', '-r', dataset) # No -R, force, origin deletion or bootfs change.
+    end
+
     def policy
       { 'filter_sha256' => Digest::SHA256.file(FILTER).hexdigest,
         'cli_sha256' => SourceIdentity.to_h.fetch(:source_sha256) }
