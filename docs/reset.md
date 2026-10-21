@@ -1,7 +1,9 @@
 # Checked reset results and read-only planning
 
-This slice extends the existing `nest reset`; it does not introduce transactions,
-release publication, finalize, reboot, or fleet orchestration.
+This page describes legacy checked reset and read-only planning. Opt-in persisted
+preparation and durable report commands are documented in
+[reset-transactions.md](reset-transactions.md). Release publication, finalize,
+reboot and fleet orchestration remain outside the CLI preparation slice.
 
 ## Commands
 
@@ -14,7 +16,9 @@ nest reset --plan --resume --format=json
 nest reset --plan --kernel --format=json
 ```
 
-Only `--plan` is an observation-only path. It does not construct an updater,
+`--plan` is the legacy observation-only path. Transaction `status` and `report`
+are also observational, with their separate documented identity checks. The
+plain planner does not construct an updater,
 installer, BE manager, or runtime. It performs local file reads for source hashes
 and read-only `findmnt`, `zfs list`, `zfs get`, and `zpool get` subprocesses. It
 never imports a pool, creates a dataset/snapshot/clone, mounts, promotes, changes
@@ -45,7 +49,8 @@ process exit is separate from the child exit: 0 means successful selected phases
 (or successful plan observation), 2 means reset/observation failure, and 3 means
 initialization/validation failed before execution. Thor argument errors remain
 Thor errors and are not JSON envelopes. Interruptions/killed workers cannot
-promise a final report. No result is persisted as a recovery transaction.
+promise a final report. Legacy execution without transaction flags does not
+persist a recovery transaction; opt-in transactions retain write-ahead receipts.
 
 `reset_result` has these fields:
 
@@ -126,8 +131,9 @@ outside its expected `/mnt` location is refused. Destroy now respects failed
 unmount; the legacy explicit destroy-next-selection behavior is otherwise not a
 new automated finalize policy.
 
-Default backup still replaces the existing alternate. This slice is not a
-transactional retention system. Shared `/boot` and kexec remain existing execution
+Default backup still replaces the existing alternate. Transactional preparation
+also uses that native policy, not a new retention/finalize system. Shared `/boot`
+and kexec remain existing execution
 side effects; stopping at a later failure does not undo already completed copies
 or boot-asset writes. No automatic reboot occurs.
 
