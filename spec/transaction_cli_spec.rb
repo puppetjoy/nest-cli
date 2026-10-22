@@ -2,6 +2,7 @@
 
 require 'nest/cli'
 require 'nest/update_transaction'
+require 'nest/reset_plan'
 require 'json'
 
 RSpec.describe 'transaction Thor interface' do
@@ -24,19 +25,59 @@ RSpec.describe 'transaction Thor interface' do
   it 'routes exact transaction identity and immutable inputs through the real parser' do
     release = "sha256:#{'a' * 64}"
     expect(transaction).to receive(:prepare).with('cycle', release: release, root_generation: '/generation',
+                                                           capacity_policy: '/capacity.json',
                                                            resume: false).and_return(report)
     expect do
       Nest::CLI::Main.start(['reset', '--transaction=cycle', "--release=#{release}",
-                             '--root-generation=/generation', '--format=json'])
+                             '--root-generation=/generation', '--capacity-policy=/capacity.json', '--format=json'])
     end.to output("#{JSON.generate(report)}\n").to_stdout
   end
 
   it 'loads resume identity from the receipt, never from legacy --resume' do
     expect(transaction).to receive(:prepare).with('cycle', release: nil, root_generation: nil,
-                                                           resume: true).and_return(report)
+                                                           capacity_policy: nil, resume: true).and_return(report)
     expect do
       Nest::CLI::Main.start(['reset', '--resume-transaction=cycle', '--format=json'])
     end.to output("#{JSON.generate(report)}\n").to_stdout
+  end
+
+  it 'routes release-aware planner policy without a lock or native updater' do
+    planner = instance_double(Nest::ResetPlan)
+    allow(Nest::ResetPlan).to receive(:new).and_return(planner)
+    planner_report = { observation_success: true, capacity: {} }
+    expect(planner).to receive(:call).with(:backup, :activate, anything).and_return(planner_report)
+    capacity = { 'admission' => 'admitted', 'admitted' => true }
+    inputs = { release: 'digest', root_generation: '/generation', capacity_policy: '/policy' }
+    expect(transaction).to receive(:plan).with(**inputs).and_return('capacity' => capacity)
+    output = StringIO.new
+    original = $stdout
+    begin
+      $stdout = output
+      args = %w[reset --plan --release=digest --root-generation=/generation --capacity-policy=/policy --format=json]
+      Nest::CLI::Main.start(args)
+    ensure
+      $stdout = original
+    end
+    expect(JSON.parse(output.string)['capacity']).to eq(capacity)
+  end
+
+  %w[json human].each do |format|
+    it "returns exit 3 for denied capacity in #{format} mode through actual parser" do
+      inputs = { release: nil, root_generation: nil, capacity_policy: '/policy', resume: false }
+      expect(transaction).to receive(:prepare).with('cycle', **inputs).and_raise('Denied capacity: fixture')
+      $logger = double(error: nil)
+      output = StringIO.new
+      original = $stdout
+      begin
+        $stdout = output
+        expect do
+          Nest::CLI::Main.start(['reset', '--transaction=cycle', '--capacity-policy=/policy', "--format=#{format}"])
+        end.to raise_error(SystemExit) { |error| expect(error.status).to eq(3) }
+      ensure
+        $stdout = original
+      end
+      expect(JSON.parse(output.string)['error']).to include('Denied capacity') if format == 'json'
+    end
   end
 
   it 'routes acceptance evidence through the real Thor parser' do

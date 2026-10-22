@@ -20,6 +20,7 @@ RSpec.describe Nest::UpdateTransaction, 'postboot lifecycle' do
       Dir.mkdir(store.path, 0o700)
       File.write(File.join(directory, 'identity'), JSON.generate(LifecycleFixture.identity))
       transaction.prepare('cycle', release: release, root_generation: '/fixture/release',
+                                   capacity_policy: TransactionFixture.capacity_policy(directory),
                                    updater: TransactionFixture::Updater.new(directory, store))
       example.run
     end
@@ -57,6 +58,16 @@ RSpec.describe Nest::UpdateTransaction, 'postboot lifecycle' do
   def finalize_worker(env = {})
     Open3.capture3(env, RbConfig.ruby, '-I', File.expand_path('../lib', __dir__),
                    File.join(__dir__, 'fixtures/lifecycle_worker.rb'), @directory)
+  end
+
+  it 'retains acceptance, finalization and report compatibility for historical records without capacity' do
+    data = store.read('cycle')
+    data.delete('capacity')
+    store.write('cycle', data)
+    expect(transaction.export('cycle')['state']).to eq('prepared')
+    expect(accept['accepted']).to be(true)
+    expect(transaction.finalize('cycle', cleanup: 'owned')['finalized']).to be(true)
+    expect(transaction.export('cycle')).to include('schema' => 2, 'state' => 'finalized')
   end
 
   it 'never treats prepare or a changed boot as acceptance' do
@@ -101,7 +112,8 @@ RSpec.describe Nest::UpdateTransaction, 'postboot lifecycle' do
     updater = double('halt at write-ahead boundary')
     expect(updater).to receive(:update).and_raise('fixture stops before native backup')
     expect do
-      transaction.prepare('second', release: release, root_generation: '/fixture/release', updater: updater)
+      transaction.prepare('second', release: release, root_generation: '/fixture/release', updater: updater,
+                                    capacity_policy: TransactionFixture.capacity_policy(@directory))
     end.to raise_error(/fixture stops/)
     expect(store.read('second')['host']['current']).to eq('fixture/ROOT/B')
   end

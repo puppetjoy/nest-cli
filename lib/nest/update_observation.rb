@@ -6,6 +6,7 @@ require 'digest'
 require 'socket'
 require_relative 'command_failure'
 require_relative 'source_identity'
+require_relative 'capacity_admission'
 
 module Nest
   # Read-only identity and mount checks. No provisioning or fallback storage.
@@ -122,18 +123,45 @@ module Nest
       end
       raise 'Root generation cannot be the mutable host alias' if path == '/' || path.start_with?('/nest/hosts/')
 
+      trusted_source_path!(path)
+
       inventory = mounts
       row = exact_mount(path, inventory)
       dataset = row.fetch('source')
+      unless property(dataset.split('/').first, 'org.nest:host-id') == machine_id &&
+             property(dataset, 'org.nest:host') == Socket.gethostname
+        raise 'Root generation must be host-local and bound to this hostname'
+      end
+
       immutable = tree(dataset).size == 1 && property(dataset, 'readonly') == 'on' &&
-                  property(dataset, 'org.nest:release') == release && row.fetch('options').split(',').include?('ro')
+                  property(dataset, 'org.nest:release') == release && property(dataset, 'mountpoint') == path &&
+                  row.fetch('options').split(',').include?('ro')
       raise 'Root generation must be one immutable read-only filesystem' unless immutable
       raise 'Root generation contains submounts' if inventory.any? { |m| m.fetch('target').start_with?("#{path}/") }
 
       %w[var/db/pkg usr/src/linux lib/modules].each { |suffix| contained_path!(path, suffix) }
 
+      txg = property(dataset, 'createtxg')
+      raise 'Invalid source creation TXG' unless txg.match?(/\A[1-9][0-9]*\z/)
+
       { 'path' => path, 'dataset' => dataset, 'guid' => guid(dataset),
-        'creation_txg' => property(dataset, 'createtxg'), 'release' => release }
+        'creation_txg' => txg, 'release' => release }
+    end
+
+    def trusted_source_path!(path)
+      loop do
+        stat = File.lstat(path)
+        unless stat.directory? && stat.uid.zero? && stat.mode.nobits?(0o022)
+          raise 'Unsafe root generation ownership or ancestor permissions'
+        end
+        break if path == '/'
+
+        path = File.dirname(path)
+      end
+    end
+
+    def capacity(policy, host, source, stage: 'backup')
+      CapacityAdmission.new(self).call(policy, host, source, stage: stage)
     end
 
     # Enumerate the pool so missing is not confused with a failed targeted read.

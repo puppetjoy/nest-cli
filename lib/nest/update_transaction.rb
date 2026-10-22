@@ -19,27 +19,40 @@ module Nest
       @observation = observation
     end
 
-    def plan(release:, root_generation:)
+    def plan(release:, root_generation:, capacity_policy: nil)
       @store.validate!
       raise 'Release must be an immutable sha256 digest' unless release&.match?(/\Asha256:[0-9a-f]{64}\z/)
       raise 'Root generation is required' unless root_generation.is_a?(String)
 
-      { 'shared_state' => @observation.shared_state(@store.path), 'host' => @observation.host,
-        'source' => @observation.source(root_generation, release), 'policy' => @observation.policy,
-        'read_only' => true, 'capacity_admission' => 'unknown' }
+      host = @observation.host
+      source = @observation.source(root_generation, release)
+      capacity = if capacity_policy
+                   @observation.capacity(CapacityPolicy.read(capacity_policy), host, source)
+                 else
+                   { 'admission' => 'unknown', 'admitted' => nil, 'reason' => 'No capacity policy supplied' }
+                 end
+      { 'shared_state' => @observation.shared_state(@store.path),
+        'host' => host.reject { |key, _| key == 'machine_id' },
+        'source' => source, 'policy' => @observation.policy,
+        'read_only' => true, 'capacity_admission' => capacity.fetch('admission'), 'capacity' => capacity }
     end
 
-    def prepare(id, release:, root_generation:, resume: false, updater: nil)
+    def prepare(id, release:, root_generation:, resume: false, updater: nil, capacity_policy: nil)
       @store.id!(id)
       @store.validate!
       shared = @observation.shared_state(@store.path)
       @store.lock do
-        @record = resume ? load_record(id) : create_record(id, release, root_generation, shared)
+        @record = resume ? load_record(id) : create_record(id, release, root_generation, shared, capacity_policy)
         validate_resume!(release, root_generation, shared)
-        updater ||= native_updater
+        validate_capacity_policy!(capacity_policy)
+        unless record.fetch('phases').size == PHASES.size && record.fetch('phases').last['state'] == 'complete'
+          check_capacity!(record['target_tree'] ? 'activation' : 'backup')
+          save
+        end
         PHASES.each do |phase|
           next if record.fetch('phases').any? { |row| row['phase'] == phase && row['state'] == 'complete' }
 
+          updater ||= native_updater
           execute_phase(phase, updater)
           return report unless record.fetch('phases').last['state'] == 'complete'
         end
@@ -101,6 +114,7 @@ module Nest
                  'updated_at' => record.fetch('updated_at'), 'phases' => phases,
                  'reboot_requested' => false, 'accepted' => record['schema'] == 2,
                  'finalized' => record['state'] == 'finalized' }
+      result['capacity'] = record['capacity'] if record['capacity']
       if record['schema'] == 2
         result.merge!(record.slice('acceptance', 'owned_candidates', 'cleanup_receipts', 'finalized_at'))
         result['snapshot_policy'] = 'retain_origins_no_reclamation_claim'
@@ -109,6 +123,52 @@ module Nest
     end
 
     private
+
+    def validate_capacity_policy!(path)
+      validate_capacity_record!(record)
+      capacity = record.fetch('capacity')
+      policy = CapacityPolicy.validate(capacity.fetch('policy'))
+      unless CapacityPolicy.digest(policy) == capacity.fetch('policy_sha256')
+        raise 'Stored capacity policy digest mismatch; manual recovery required'
+      end
+      return unless path && CapacityPolicy.read(path) != policy
+
+      raise 'Capacity policy cannot replace the policy bound to this transaction'
+    end
+
+    def validate_capacity_record!(data)
+      return unless data.key?('capacity')
+
+      capacity = data.fetch('capacity')
+      unless capacity.is_a?(Hash) && capacity.keys.sort == %w[checks policy policy_sha256]
+        raise 'Invalid stored capacity binding'
+      end
+
+      digest = CapacityPolicy.digest(capacity.fetch('policy'))
+      raise 'Stored capacity policy digest mismatch' unless digest == capacity.fetch('policy_sha256')
+
+      checks = capacity.fetch('checks')
+      raise 'Invalid stored capacity checks' unless checks.is_a?(Array) && checks.size.between?(1, 16)
+
+      checks.each do |check|
+        fields = %w[admission admitted policy_sha256 observations observations_sha256 reason checked_at]
+        next if check.is_a?(Hash) && (check.keys - fields).empty? && check['admitted'] == true &&
+                check['admission'] == 'admitted' && check['policy_sha256'] == digest &&
+                check['observations'].is_a?(Hash) &&
+                check['observations_sha256'] == Digest::SHA256.hexdigest(JSON.generate(check['observations']))
+
+        raise 'Invalid stored capacity observation digest or verdict'
+      end
+    end
+
+    def check_capacity!(stage)
+      capacity = record.fetch('capacity')
+      check = @observation.capacity(capacity.fetch('policy'), @observation.host, record.fetch('source'), stage: stage)
+      raise 'Capacity accounting did not admit preparation' unless check['admitted'] == true
+
+      check['checked_at'] = now
+      capacity['checks'] = (capacity.fetch('checks') + [check]).last(16)
+    end
 
     def bound_host!
       shared = @observation.shared_state(@store.path)
@@ -132,6 +192,7 @@ module Nest
       end
 
       validate_lifecycle!(data)
+      validate_capacity_record!(data)
 
       rows = data.fetch('phases')
       raise 'Invalid phase receipts' unless rows.is_a?(Array) && rows.size <= PHASES.size &&
@@ -167,7 +228,7 @@ module Nest
       data
     end
 
-    def create_record(id, release, root_generation, shared)
+    def create_record(id, release, root_generation, shared, capacity_policy)
       raise 'Release must be an immutable sha256 digest' unless release&.match?(/\Asha256:[0-9a-f]{64}\z/)
       raise 'Root generation is required' unless root_generation.is_a?(String)
       raise 'Transaction ID already exists; use --resume-transaction' if @store.ids.include?(id)
@@ -190,8 +251,14 @@ module Nest
 
       @observation.target_unmounted!(host.fetch('target'))
       source = @observation.source(root_generation, release)
+      raise 'New preparation requires --capacity-policy FILE' unless capacity_policy
+
+      capacity = CapacityPolicy.read(capacity_policy)
+      admission = @observation.capacity(capacity, host, source)
       { 'schema' => 1, 'kind' => 'reset_transaction', 'id' => id, 'state' => 'pending',
         'release' => release, 'source' => source, 'host' => host, 'shared_state' => shared,
+        'capacity' => { 'policy' => capacity, 'policy_sha256' => CapacityPolicy.digest(capacity),
+                        'checks' => [admission] },
         'policy' => @observation.policy, 'target_tree' => nil, 'phases' => [], 'created_at' => now }
     end
 
@@ -200,6 +267,10 @@ module Nest
       raise 'Release mismatch' if release && release != record.fetch('release')
       raise 'Root generation mismatch' if root_generation && root_generation != record.fetch('source').fetch('path')
       raise 'Shared state identity mismatch' unless shared == record.fetch('shared_state')
+      unless record['capacity']
+        raise 'Historical preparation lacks capacity admission; export report and inspect native state ' \
+              'for manual recovery, never replay'
+      end
 
       validate_identity!
       last = record.fetch('phases').last
@@ -244,6 +315,7 @@ module Nest
       target = record.fetch('host').fetch('target')
       @observation.target_unmounted!(target) if phase == 'backup'
       @observation.copy_target!(target, record.fetch('target_tree')) if %w[sync kernel].include?(phase)
+      check_capacity!(phase == 'backup' ? 'backup' : 'activation') if %w[backup sync activate].include?(phase)
       previous = record.fetch('phases').last
       attempt = previous && previous['phase'] == phase ? record.fetch('phases').pop.fetch('attempt') + 1 : 1
       receipt = { 'phase' => phase, 'state' => 'started', 'attempt' => attempt,
@@ -251,6 +323,10 @@ module Nest
       record.fetch('phases') << receipt
       record['state'] = 'pending'
       save # Must be durable BEFORE the first native side effect.
+      if %w[backup activate].include?(phase)
+        check_capacity!(phase == 'backup' ? 'backup' : 'activation')
+        save
+      end
       success = updater.update(phase.to_sym, phase.to_sym,
                                root_generation: record.fetch('source').fetch('path'), format: 'json')
       result = updater.report

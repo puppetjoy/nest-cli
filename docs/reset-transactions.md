@@ -18,7 +18,7 @@ accepted by the publisher contract below.
 
 ```sh
 nest reset --plan --release sha256:DIGEST --root-generation /nest/releases/GENERATION/HOST --format=json
-nest reset --transaction update-ID --release sha256:DIGEST --root-generation /nest/releases/GENERATION/HOST --format=json
+nest reset --transaction update-ID --release sha256:DIGEST --root-generation /nest/releases/GENERATION/HOST --capacity-policy /POLICY.json --format=json
 nest reset --resume-transaction update-ID --format=json
 nest reset status update-ID --format=json
 nest reset report update-ID --format=json
@@ -53,7 +53,10 @@ publisher is not needed to export a retained report.
 The plain planner remains independent of transaction state. With release/path
 arguments it additionally performs transaction storage/source preflight and
 returns `transaction_preflight`. This creates nothing, including `.lock`.
-Capacity admission remains unknown, not implicitly approved by preflight success.
+Without `--capacity-policy FILE`, capacity admission remains unknown, not
+implicitly approved by preflight success. New preparation requires the bound
+conservative gate documented in [reset-capacity.md](reset-capacity.md), including
+its supported layouts, finite-limit refusals and historical non-replay rules.
 
 ## Mandatory shared-state provisioning contract for nest/config
 

@@ -318,6 +318,7 @@ module Nest
       option :resume_transaction, type: :string, desc: 'Resume the exact persisted transaction; never repeat backup'
       option :release, type: :string, desc: 'Immutable release identity (sha256 digest)'
       option :root_generation, type: :string, desc: 'Canonical read-only local ZFS root generation mount'
+      option :capacity_policy, type: :string, desc: 'Bound conservative capacity-policy JSON file'
       option :kernel, aliases: '-k', type: :boolean, desc: 'Just update the kernel'
       option :firmware, aliases: '-f', type: :boolean, desc: 'Just update the firmware'
       option :resume, aliases: '-r', type: :boolean, desc: 'Skip backup step'
@@ -369,7 +370,7 @@ module Nest
 
         return reset_transaction(action, id) if action || options[:transaction] || options[:resume_transaction]
         raise 'Evidence/cleanup require reset accept/finalize ID' if options[:evidence] || options[:cleanup]
-        if !options[:plan] && (options[:release] || options[:root_generation])
+        if !options[:plan] && (options[:release] || options[:root_generation] || options[:capacity_policy])
           raise 'Release/root generation require --transaction or --plan'
         end
 
@@ -378,11 +379,13 @@ module Nest
         warn Nest::ResetPlan::RESUME_WARNING if options[:resume] && options[:format] != 'json'
         if options[:plan]
           report = Nest::ResetPlan.new.call(start.to_sym, stop.to_sym, options)
-          if options[:release] || options[:root_generation]
+          if options[:release] || options[:root_generation] || options[:capacity_policy]
             require_relative 'update_transaction'
             report[:transaction_preflight] = Nest::UpdateTransaction.new.plan(
-              release: options[:release], root_generation: options[:root_generation]
+              release: options[:release], root_generation: options[:root_generation],
+              capacity_policy: options[:capacity_policy]
             )
+            report[:capacity] = report[:transaction_preflight].fetch('capacity')
           end
           success = report[:observation_success]
         else
@@ -433,7 +436,9 @@ module Nest
             end
 
             raise 'Observation cannot prepare a transaction' if options[:transaction] || options[:resume_transaction]
-            raise 'Lifecycle commands use recorded release/source' if options[:release] || options[:root_generation]
+            if options[:release] || options[:root_generation] || options[:capacity_policy]
+              raise 'Lifecycle commands use recorded release/source/policy'
+            end
             raise '--plan is only supported for finalize' if options[:plan] && action != 'finalize'
             raise '--evidence is only supported for accept' if options[:evidence] && action != 'accept'
             raise '--cleanup is only supported for finalize' if options[:cleanup] && action != 'finalize'
@@ -455,6 +460,7 @@ module Nest
 
             report = transaction.prepare(options[:transaction] || options[:resume_transaction],
                                          release: options[:release], root_generation: options[:root_generation],
+                                         capacity_policy: options[:capacity_policy],
                                          resume: !options[:resume_transaction].nil?)
             success = report.fetch('success')
           end

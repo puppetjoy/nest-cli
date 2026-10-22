@@ -6,6 +6,19 @@ require 'nest/update_transaction'
 module TransactionFixture
   RELEASE = "sha256:#{'a' * 64}"
 
+  def self.capacity_policy(directory)
+    path = File.join(directory, 'capacity-policy.json')
+    unless File.exist?(path)
+      File.write(path, JSON.generate(
+                         'schema' => 1, 'kind' => 'nest_reset_capacity_policy', 'release' => RELEASE,
+                         'hostname' => 'fixture', 'host_identity_sha256' => Digest::SHA256.hexdigest('f' * 32),
+                         'pool_guid' => '101', 'source_guid' => '301', 'write_budget_bytes' => 1000,
+                         'promotion_budget_bytes' => 1000, 'physical_reserve_bytes' => 100, 'slop_reserve_bytes' => 100
+                       ))
+    end
+    path
+  end
+
   class Observation
     attr_reader :directory
 
@@ -33,6 +46,16 @@ module TransactionFixture
 
     def policy
       values.fetch('policy')
+    end
+
+    # Native accounting is independently exercised by CapacityAdmission fixtures.
+    def capacity(policy, _host, _source, stage: 'backup')
+      raise 'Fixture accounting changed' if values['capacity_denied']
+
+      observations = { 'stage' => stage }
+      { 'admission' => 'admitted', 'admitted' => true, 'observations' => observations,
+        'observations_sha256' => Digest::SHA256.hexdigest(JSON.generate(observations)),
+        'policy_sha256' => Nest::CapacityPolicy.digest(policy) }
     end
 
     def tree(_target)
@@ -98,6 +121,7 @@ module TransactionFixture
                transaction.status('cycle')
              else
                transaction.prepare('cycle', release: RELEASE, root_generation: '/fixture/release',
+                                            capacity_policy: mode == 'resume' ? nil : capacity_policy(directory),
                                             resume: mode == 'resume', updater: Updater.new(directory, store))
              end
     puts JSON.generate(result)

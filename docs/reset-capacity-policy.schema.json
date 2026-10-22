@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Nest reset conservative capacity policy (fixture example is not a live policy)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "kind",
+    "release",
+    "hostname",
+    "host_identity_sha256",
+    "pool_guid",
+    "source_guid",
+    "write_budget_bytes",
+    "promotion_budget_bytes",
+    "physical_reserve_bytes",
+    "slop_reserve_bytes"
+  ],
+  "properties": {
+    "schema": {
+      "type": "integer",
+      "const": 1
+    },
+    "kind": {
+      "const": "nest_reset_capacity_policy"
+    },
+    "release": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "hostname": {
+      "type": "string",
+      "minLength": 1
+    },
+    "host_identity_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "pool_guid": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*$"
+    },
+    "source_guid": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]*$"
+    },
+    "write_budget_bytes": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "promotion_budget_bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "physical_reserve_bytes": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "slop_reserve_bytes": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "$comment": "Runtime additionally refuses duplicate keys, floating point representations and files over 16384 bytes. Admission is not allocation proof or live authorization."
+}

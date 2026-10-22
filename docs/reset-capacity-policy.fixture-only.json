@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "kind": "nest_reset_capacity_policy",
+  "release": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "hostname": "fixture",
+  "host_identity_sha256": "352302489bc2fcf025cf00cda8308033f97ac87712ce90b4d7cd72c58e4c3af9",
+  "pool_guid": "101",
+  "source_guid": "301",
+  "write_budget_bytes": 1000000,
+  "promotion_budget_bytes": 1000,
+  "physical_reserve_bytes": 100,
+  "slop_reserve_bytes": 100
+}
