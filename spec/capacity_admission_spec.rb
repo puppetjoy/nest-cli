@@ -18,7 +18,8 @@ RSpec.describe Nest::CapacityAdmission do
       @policy['promotion_budget_bytes'] = 1000
       @host = { 'machine_id' => 'f' * 32, 'hostname' => 'fixture', 'pool_guid' => '101',
                 'current' => 'fixture/ROOT/A', 'target' => 'fixture/ROOT/B',
-                'current_tree' => [{ 'dataset' => 'fixture/ROOT/A' }] }
+                'current_tree' => [{ 'dataset' => 'fixture/ROOT/A', 'guid' => '203' }],
+                'alternate_tree' => [{ 'dataset' => 'fixture/ROOT/B', 'guid' => '204' }] }
       @source = { 'dataset' => 'fixture/source', 'guid' => '301', 'release' => TransactionFixture::RELEASE,
                   'path' => @source_path }
       @datasets = %w[fixture fixture/ROOT fixture/ROOT/A fixture/ROOT/B fixture/source].to_h do |name|
@@ -29,6 +30,9 @@ RSpec.describe Nest::CapacityAdmission do
       end
       @physical = { 'size' => '20000000', 'allocated' => '10000000', 'free' => '10000000', 'freeing' => '9000000' }
       @snapshots = ''
+      @types = {}
+      @guids = @datasets.keys.each_with_index.to_h { |name, index| [name, (201 + index).to_s] }
+      @guids['fixture/source'] = '301'
       @responses = {}
       fixture = <<~RUBY
         require 'json'
@@ -61,21 +65,202 @@ RSpec.describe Nest::CapacityAdmission do
     pool_key = ['zpool', 'get', '-Hp', '-o', 'property,value', 'size,allocated,free,freeing', 'fixture']
     @responses[JSON.generate(pool_key)] =
       @physical.map { |key, value| "#{key}\t#{value}\n" }.join
-    @responses[JSON.generate(['zfs', 'list', '-Hp', '-r', '-t', 'filesystem,volume', '-o', 'name,type', 'fixture'])] =
-      @datasets.keys.map { |name| "#{name}\tfilesystem\n" }.join
+    inventory_key = ['zfs', 'list', '-Hp', '-r', '-t', 'filesystem,volume', '-o', 'name,type,guid', 'fixture']
+    @responses[JSON.generate(inventory_key)] =
+      @datasets.keys.map { |name| "#{name}\t#{@types.fetch(name, 'filesystem')}\t#{@guids.fetch(name)}\n" }.join
     @datasets.each do |name, properties|
+      required = @types[name] == 'volume' ? Nest::CapacityAdmission::VOLUME_PROPERTIES : Nest::CapacityAdmission::PROPERTIES
       @responses[JSON.generate(['zfs', 'get', '-Hp', '-o', 'property,value',
-                                Nest::CapacityAdmission::PROPERTIES.join(','), name])] =
+                                required.join(','), name])] =
         properties.map { |key, value| "#{key}\t#{value}\n" }.join
     end
-    snapshot_key = ['zfs', 'list', '-Hp', '-r', '-t', 'snapshot', '-o', 'name,used,clones', 'fixture']
-    @responses[JSON.generate(snapshot_key)] = @snapshots
+    snapshot_key = ['zfs', 'list', '-Hp', '-r', '-t', 'snapshot', '-o', 'name,guid,used,clones,userrefs', 'fixture']
+    @responses[JSON.generate(snapshot_key)] = @snapshots.lines.each_with_index.map do |line, index|
+      name, used, clones = line.strip.split("\t")
+      "#{name}\t#{1001 + index}\t#{used}\t#{clones}\t1\n"
+    end.join
     File.write(ENV.fetch('NEST_CAPACITY_DATA'), JSON.generate(@responses))
   end
 
   def admit(stage = 'backup')
     publish
     described_class.new(Nest::UpdateObservation.new).call(@policy, @host, @source, stage: stage)
+  end
+
+  def add_filesystem(name, properties = {})
+    @datasets[name] = @datasets.fetch('fixture').merge(properties)
+    @guids[name] = (400 + @guids.size).to_s
+  end
+
+  def add_volume(name)
+    @types[name] = 'volume'
+    @guids[name] = (400 + @guids.size).to_s
+    @datasets[name] = described_class::VOLUME_PROPERTIES.to_h { |key| [key, '0'] }
+    @datasets[name].merge!('origin' => '-', 'volsize' => '4096000', 'volblocksize' => '8192',
+                           'used' => '100', 'referenced' => '100', 'logicalreferenced' => '200')
+  end
+
+  # Sanitized topology, not captured real accounting or a real generation/policy.
+  def ordinary_layout(kind)
+    @datasets.delete_if { |name, _| name != 'fixture' }
+    %w[crypt crypt/ROOT crypt/home crypt/home/joy crypt/generations crypt/generations/release].each do |suffix|
+      add_filesystem("fixture/#{suffix}")
+    end
+    @host.merge!('current' => 'fixture/crypt/ROOT/B', 'target' => 'fixture/crypt/ROOT/A')
+    %w[A B].each do |be|
+      ['', '/debug', '/src', '/var'].each { |suffix| add_filesystem("fixture/crypt/ROOT/#{be}#{suffix}") }
+    end
+    %w[current alternate].zip(%w[B A]).each do |key, be|
+      @host["#{key}_tree"] = @datasets.keys.grep(%r{/ROOT/#{be}(?:/|$)}).map do |name|
+        { 'dataset' => name, 'guid' => @guids.fetch(name) }
+      end
+    end
+    @source.merge!('dataset' => 'fixture/crypt/generations/release',
+                   'guid' => @guids.fetch('fixture/crypt/generations/release'))
+    @policy['source_guid'] = @source['guid']
+    @host['current_tree'].each do |row|
+      name = row.fetch('dataset')
+      target = name.sub('/B', '/A')
+      snapshot = "#{name}@beadm-clone-A-to-B"
+      @datasets[name]['usedbysnapshots'] = '10'
+      @datasets[target]['origin'] = snapshot
+      @snapshots += "#{snapshot}\t10\t#{target}\n"
+    end
+    add_volume('fixture/crypt/swap')
+    return unless kind == 'owl'
+
+    add_volume('fixture/crypt/fscache')
+    @datasets['fixture/crypt/fscache']['refreservation'] = '4096000'
+    add_filesystem('fixture/crypt/kubernetes')
+    3.times do |index|
+      add_filesystem("fixture/crypt/kubernetes/pvc-#{index}", 'quota' => '1000', 'available' => '1')
+    end
+    add_filesystem('fixture/crypt/home-backup', 'origin' => 'fixture/crypt/home/joy@retained')
+    @datasets['fixture/crypt/home/joy']['usedbysnapshots'] = '10'
+    @snapshots += "fixture/crypt/home/joy@retained\t10\tfixture/crypt/home-backup\n"
+  end
+
+  %w[builder1 owl].each do |kind|
+    it "admits the sanitized #{kind} topology, retaining exact B-to-A old origins and unrelated allocations" do
+      ordinary_layout(kind)
+      result = admit
+      observations = result.fetch('observations')
+      expect(observations['accounting_contract']).to eq(2)
+      expect(observations['datasets']['fixture/crypt/swap']).to include('type' => 'volume', 'volsize' => 4_096_000)
+      expect(observations['datasets']['fixture/crypt/swap']).not_to have_key('available')
+      affected = %w[fixture fixture/crypt fixture/crypt/ROOT fixture/crypt/generations]
+      unrelated = %w[fixture/crypt/home/joy fixture/crypt/swap fixture/crypt/kubernetes/pvc-0]
+      expect(observations['affected_datasets']).to include(*affected)
+      expect(observations['affected_datasets']).not_to include(*unrelated)
+      expect(observations['promotion_bound_bytes']).to eq(400)
+      expect(observations['snapshots'].all? { |row| row['userrefs'] == 1 }).to be(true)
+      @physical.merge!('free' => '1001199', 'allocated' => '18998801')
+      expect { admit }.to raise_error(/physical free/)
+      @physical.merge!('free' => '1001200', 'allocated' => '18998800')
+      expect(admit['admitted']).to be(true)
+      @policy['promotion_budget_bytes'] = 399
+      expect { admit }.to raise_error(/snapshot-accounting bound/)
+    end
+
+    it "checks activation against exact new B-to-A origins on the #{kind} topology" do
+      ordinary_layout(kind)
+      @datasets.each_value { |props| props['origin'] = props['origin'].sub('beadm-clone-A-to-B', 'beadm-clone-B-to-A') }
+      @snapshots = @snapshots.gsub('beadm-clone-A-to-B', 'beadm-clone-B-to-A')
+      expect(admit('activation')['admitted']).to be(true)
+      @snapshots += "fixture/crypt/ROOT/A@retained\t0\t-\n"
+      expect { admit('activation') }.to raise_error(/target snapshots/)
+    end
+  end
+
+  %w[fixture/ROOT/A/volume fixture/ROOT/B/volume].each do |name|
+    it "refuses affected volume #{name}" do
+      add_volume(name)
+      expect { admit }.to raise_error(/unsupported volume in affected closure/)
+    end
+  end
+
+  it 'refuses a newly nested source filesystem or volume before using its incomplete lower bound' do
+    add_filesystem('fixture/source/new')
+    expect { admit }.to raise_error(/source inventory.*one immutable filesystem/)
+    add_volume('fixture/source/new')
+    expect { admit }.to raise_error(/source inventory.*one immutable filesystem/)
+  end
+
+  %w[fixture/crypt fixture/crypt/ROOT fixture/crypt/generations fixture/crypt/generations/release].each do |name|
+    %w[quota refquota reservation refreservation].each do |property|
+      it "refuses finite affected #{property} on #{name} despite unrelated-volume support" do
+        ordinary_layout('owl')
+        @datasets[name][property] = '1'
+        expect { admit }.to raise_error(/finite quota.*affected ancestor/)
+      end
+    end
+  end
+
+  it 'still enforces source apparent/reference lower bounds and affected logical availability on ordinary layouts' do
+    ordinary_layout('owl')
+    @datasets[@source['dataset']]['logicalreferenced'] = '1000001'
+    expect { admit }.to raise_error(/source lower bound/)
+    @datasets[@source['dataset']]['logicalreferenced'] = '200'
+    @datasets['fixture/crypt/ROOT']['available'] = '1000999'
+    expect { admit }.to raise_error(/logical available/)
+  end
+
+  it 'refuses unknown volume accounting and never substitutes filesystem-only properties' do
+    ordinary_layout('owl')
+    @datasets['fixture/crypt/swap']['volsize'] = '-'
+    expect { admit }.to raise_error(/invalid native/)
+    @datasets['fixture/crypt/swap'].delete('volsize')
+    expect { admit }.to raise_error(/Incomplete dataset/)
+  end
+
+  %w[current alternate source].each do |binding|
+    it "refuses changed #{binding} GUIDs in complete typed inventory" do
+      ordinary_layout('owl')
+      name = binding == 'source' ? @source['dataset'] : @host["#{binding}_tree"].last.fetch('dataset')
+      @guids[name] = '999'
+      expect { admit }.to raise_error(/Changed affected dataset GUID/)
+    end
+  end
+
+  it 'refuses shared old origins and unrelated clones touching the mutation closure' do
+    ordinary_layout('owl')
+    snapshot = 'fixture/crypt/ROOT/B@beadm-clone-A-to-B'
+    add_filesystem('fixture/crypt/foreign', 'origin' => snapshot)
+    @snapshots = @snapshots.sub("#{snapshot}\t10\tfixture/crypt/ROOT/A",
+                                "#{snapshot}\t10\tfixture/crypt/ROOT/A,fixture/crypt/foreign")
+    expect { admit }.to raise_error(/snapshot clone dependencies/)
+  end
+
+  it 'refuses cross-tree alternate origins even with matching snapshot names and reciprocal clone rows' do
+    ordinary_layout('owl')
+    @datasets['fixture/crypt/ROOT/A']['origin'] = 'fixture/crypt/home/joy@retained'
+    @snapshots = @snapshots.sub("fixture/crypt/ROOT/B@beadm-clone-A-to-B\t10\tfixture/crypt/ROOT/A",
+                                "fixture/crypt/ROOT/B@beadm-clone-A-to-B\t10\t-")
+    @snapshots = @snapshots.sub("\tfixture/crypt/home-backup\n", "\tfixture/crypt/home-backup,fixture/crypt/ROOT/A\n")
+    expect { admit }.to raise_error(/snapshot clone dependencies/)
+  end
+
+  it 'refuses unknown clone rows, missing origin snapshots and incomplete bound target trees' do
+    ordinary_layout('builder1')
+    @snapshots = @snapshots.sub("\tfixture/crypt/ROOT/A\n", "\tfixture/unknown\n")
+    expect { admit }.to raise_error(/clone dependencies/)
+    @snapshots = ''
+    expect { admit }.to raise_error(%r{origin/dependency})
+    @datasets.each_value { |props| props['origin'] = '-' }
+    @host['alternate_tree'].pop
+    expect { admit }.to raise_error(/bound alternate-tree/)
+  end
+
+  it 'refuses duplicate GUIDs, invalid stages, overlapping roots and unbounded receipts' do
+    @guids['fixture/source'] = @guids['fixture/ROOT/A']
+    expect { admit }.to raise_error(/Duplicate capacity GUID/)
+    @guids['fixture/source'] = '301'
+    expect { admit('invented') }.to raise_error(/stage/)
+    @source['dataset'] = 'fixture/ROOT'
+    expect { admit }.to raise_error(/overlapping/)
+    @source['dataset'] = 'fixture/source'
+    160.times { |index| add_filesystem("fixture/unrelated-#{index}") }
+    expect { admit }.to raise_error(/bounded receipt/)
   end
 
   it 'admits a supported unconstrained layout using real native subprocess fixtures and ordinary-directory du' do
@@ -135,13 +320,13 @@ RSpec.describe Nest::CapacityAdmission do
   it 'checks the actual backup snapshot name and activation origin/clone dependency' do
     @snapshots = "fixture/ROOT/A@beadm-clone-A-to-B\t10\tfixture/ROOT/B\n"
     @datasets['fixture/ROOT/A']['usedbysnapshots'] = '10'
-    expect { admit }.to raise_error(/Snapshot-name collision/)
     @datasets['fixture/ROOT/B']['origin'] = 'fixture/ROOT/A@beadm-clone-A-to-B'
+    expect { admit }.to raise_error(/Snapshot-name collision/)
     expect(admit('activation')['admitted']).to be(true)
     @snapshots += "fixture/ROOT/B@collision\t0\t-\n"
     expect { admit('activation') }.to raise_error(/target snapshots/)
     @snapshots = "fixture/ROOT/A@beadm-clone-A-to-B\t10\tfixture/foreign\n"
-    expect { admit('activation') }.to raise_error(%r{origin/dependency})
+    expect { admit('activation') }.to raise_error(%r{origin/dependency|clone dependencies})
   end
 
   it 'refuses incomplete, duplicate and failed native reads instead of inventing zero' do
@@ -179,12 +364,12 @@ RSpec.describe Nest::CapacityAdmission do
     expect { admit }.to raise_error(/Duplicate snapshot/)
     @snapshots = ''
     publish
-    key = @responses.keys.find { |entry| JSON.parse(entry).include?('name,type') }
+    key = @responses.keys.find { |entry| JSON.parse(entry).include?('name,type,guid') }
     @responses[key] += "fixture/volume\tvolume\n"
     File.write(ENV.fetch('NEST_CAPACITY_DATA'), JSON.generate(@responses))
     expect do
       described_class.new(Nest::UpdateObservation.new).call(@policy, @host, @source)
-    end.to raise_error(/unsupported volume/)
+    end.to raise_error(/incomplete typed/)
   end
 
   it 'refuses missing ancestor inventory and current-origin ambiguity' do
@@ -192,7 +377,7 @@ RSpec.describe Nest::CapacityAdmission do
     expect { admit }.to raise_error(/ancestor/)
     @datasets['fixture/ROOT'] = @datasets['fixture'].dup
     @datasets['fixture/ROOT/A']['origin'] = 'fixture/foreign@old'
-    expect { admit }.to raise_error(/current origin/)
+    expect { admit }.to raise_error(%r{origin/dependency})
   end
 end
 

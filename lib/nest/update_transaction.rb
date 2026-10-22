@@ -140,8 +140,13 @@ module Nest
       return unless data.key?('capacity')
 
       capacity = data.fetch('capacity')
-      unless capacity.is_a?(Hash) && capacity.keys.sort == %w[checks policy policy_sha256]
-        raise 'Invalid stored capacity binding'
+      fields = %w[checks policy policy_sha256]
+      fields << 'accounting_contract' if capacity.is_a?(Hash) && capacity.key?('accounting_contract')
+      raise 'Invalid stored capacity binding' unless capacity.is_a?(Hash) && capacity.keys.sort == fields.sort
+
+      if capacity.key?('accounting_contract') &&
+         !capacity['accounting_contract'].eql?(CapacityAdmission::ACCOUNTING_CONTRACT)
+        raise 'Unsupported stored capacity accounting contract'
       end
 
       digest = CapacityPolicy.digest(capacity.fetch('policy'))
@@ -151,6 +156,12 @@ module Nest
       raise 'Invalid stored capacity checks' unless checks.is_a?(Array) && checks.size.between?(1, 16)
 
       checks.each do |check|
+        if capacity.key?('accounting_contract') &&
+           (!check.is_a?(Hash) || !check['observations'].is_a?(Hash) ||
+            !check['observations']['accounting_contract'].eql?(capacity['accounting_contract']))
+          raise 'Stored capacity accounting contract mismatch'
+        end
+
         fields = %w[admission admitted policy_sha256 observations observations_sha256 reason checked_at]
         next if check.is_a?(Hash) && (check.keys - fields).empty? && check['admitted'] == true &&
                 check['admission'] == 'admitted' && check['policy_sha256'] == digest &&
@@ -257,7 +268,8 @@ module Nest
       admission = @observation.capacity(capacity, host, source)
       { 'schema' => 1, 'kind' => 'reset_transaction', 'id' => id, 'state' => 'pending',
         'release' => release, 'source' => source, 'host' => host, 'shared_state' => shared,
-        'capacity' => { 'policy' => capacity, 'policy_sha256' => CapacityPolicy.digest(capacity),
+        'capacity' => { 'accounting_contract' => CapacityAdmission::ACCOUNTING_CONTRACT,
+                        'policy' => capacity, 'policy_sha256' => CapacityPolicy.digest(capacity),
                         'checks' => [admission] },
         'policy' => @observation.policy, 'target_tree' => nil, 'phases' => [], 'created_at' => now }
     end
@@ -270,6 +282,10 @@ module Nest
       unless record['capacity']
         raise 'Historical preparation lacks capacity admission; export report and inspect native state ' \
               'for manual recovery, never replay'
+      end
+
+      unless record['capacity']['accounting_contract'].eql?(CapacityAdmission::ACCOUNTING_CONTRACT)
+        raise 'Historical preparation has stale capacity accounting contract; export and inspect, never replay'
       end
 
       validate_identity!

@@ -52,7 +52,7 @@ module TransactionFixture
     def capacity(policy, _host, _source, stage: 'backup')
       raise 'Fixture accounting changed' if values['capacity_denied']
 
-      observations = { 'stage' => stage }
+      observations = { 'stage' => stage, 'accounting_contract' => Nest::CapacityAdmission::ACCOUNTING_CONTRACT }
       { 'admission' => 'admitted', 'admitted' => true, 'observations' => observations,
         'observations_sha256' => Digest::SHA256.hexdigest(JSON.generate(observations)),
         'policy_sha256' => Nest::CapacityPolicy.digest(policy) }
