@@ -403,6 +403,45 @@ RSpec.describe Nest::UpdateTransaction do
     expect(effects).to eq(%w[backup mount sync])
   end
 
+  it 'exports old r2 accounting unchanged but never reinterprets it on interrupted-copy resume' do
+    worker('new', crash: 'sync')
+    data = store.read('cycle')
+    data['capacity'].delete('accounting_contract')
+    data['capacity']['checks'].each do |check|
+      check['observations'].delete('accounting_contract')
+      check['observations_sha256'] = Digest::SHA256.hexdigest(JSON.generate(check['observations']))
+    end
+    store.write('cycle', data)
+    before = File.binread(File.join(store.path, 'cycle.json'))
+    expect(transaction.export('cycle')['capacity']).to eq(data['capacity'])
+    expect(observation).not_to receive(:capacity)
+    expect do
+      transaction.prepare('cycle', release: nil, root_generation: nil, resume: true,
+                                   capacity_policy: TransactionFixture.capacity_policy(@directory))
+    end.to raise_error(/stale capacity accounting contract.*never replay/)
+    expect(File.binread(File.join(store.path, 'cycle.json'))).to eq(before)
+    expect(effects).to eq(%w[backup mount sync])
+  end
+
+  it 'binds the accounting contract in every check and refuses missing, mixed or future contracts' do
+    worker('new', crash: 'sync')
+    original = store.read('cycle')
+    expect(original['capacity']['accounting_contract']).to eq(2)
+    [nil, 1, 3, 2.0, true].each do |version|
+      data = JSON.parse(JSON.generate(original))
+      data['capacity']['accounting_contract'] = version
+      store.write('cycle', data)
+      expect { transaction.export('cycle') }.to raise_error(/accounting contract/)
+    end
+    data = JSON.parse(JSON.generate(original))
+    check = data['capacity']['checks'].last
+    check['observations'].delete('accounting_contract')
+    check['observations_sha256'] = Digest::SHA256.hexdigest(JSON.generate(check['observations']))
+    store.write('cycle', data)
+    expect { transaction.export('cycle') }.to raise_error(/accounting contract mismatch/)
+    expect(effects).to eq(%w[backup mount sync])
+  end
+
   it 'does not replay completed preparation for new capacity evidence' do
     worker('new')
     expect(observation).not_to receive(:capacity)

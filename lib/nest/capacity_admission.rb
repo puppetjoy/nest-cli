@@ -8,6 +8,9 @@ module Nest
     NUMERIC = %w[available used usedbysnapshots referenced logicalreferenced
                  quota refquota reservation refreservation].freeze
     PROPERTIES = (NUMERIC + %w[origin]).freeze
+    VOLUME_PROPERTIES = %w[used usedbysnapshots referenced logicalreferenced reservation refreservation
+                           volsize volblocksize origin].freeze
+    ACCOUNTING_CONTRACT = 2
 
     def initialize(observation)
       @observation = observation
@@ -28,6 +31,7 @@ module Nest
       physical = pool_properties(pool)
       datasets = datasets(pool)
       snapshots = snapshots(pool, datasets)
+      affected = affected_datasets(host, source, datasets, stage)
       datasets.each do |name, properties|
         snapshot_used = snapshots.select { |row| row.fetch('name').split('@').first == name }
                                  .sum { |row| row.fetch('used') }
@@ -46,12 +50,13 @@ module Nest
 
       # No finite limit or reservation is treated as automatically transferable.
       # Refuse rather than guess quota/refquota or inherited reservation algebra.
-      datasets.each_value do |props|
+      affected.each do |name|
+        props = datasets.fetch(name)
         unless %w[quota refquota reservation refreservation].all? { |key| props.fetch(key).zero? }
-          raise 'Unknown capacity: finite quota/refquota or reservation in pool/ancestor layout'
+          raise "Unknown capacity: finite quota/refquota or reservation in affected ancestor layout: #{name}"
         end
       end
-      validate_layout!(host, datasets, snapshots, stage)
+      validate_layout!(host, source, datasets, snapshots, stage)
       current = host.fetch('current')
       transfer = datasets.select { |name, _| name == current || name.start_with?("#{current}/") }
                          .values.sum { |props| props.fetch('used') }
@@ -62,18 +67,19 @@ module Nest
       demand = policy.fetch('write_budget_bytes') + policy.fetch('promotion_budget_bytes')
       required = demand + policy.fetch('physical_reserve_bytes') + policy.fetch('slop_reserve_bytes')
       raise 'Denied capacity: physical free cannot cover budgets, reserve and slop' if physical.fetch('free') < required
-      if datasets.values.any? { |p| p.fetch('available') < demand }
+      if affected.any? { |name| datasets.fetch(name).fetch('available') < demand }
         raise 'Denied capacity: logical available cannot cover budgets'
       end
 
       observations = { 'physical_pool' => physical, 'datasets' => datasets, 'snapshots' => snapshots,
+                       'affected_datasets' => affected, 'accounting_contract' => ACCOUNTING_CONTRACT,
                        'source_lower_bound_bytes' => source_bytes, 'promotion_bound_bytes' => transfer,
                        'required_physical_bytes' => required, 'stage' => stage }
       raise 'Unknown capacity: accounting exceeds bounded receipt size' if JSON.generate(observations).bytesize > 32_768
 
       { 'admission' => 'admitted', 'admitted' => true, 'policy_sha256' => CapacityPolicy.digest(policy),
         'observations' => observations, 'observations_sha256' => Digest::SHA256.hexdigest(JSON.generate(observations)),
-        'reason' => 'Supported unconstrained layout under configured budgets; native failures remain authoritative.' }
+        'reason' => 'Unconstrained affected ancestry under configured budgets; native failures are authoritative.' }
     end
 
     private
@@ -105,47 +111,115 @@ module Nest
     end
 
     def datasets(pool)
-      names = read('zfs', 'list', '-Hp', '-r', '-t', 'filesystem,volume', '-o', 'name,type', pool).lines.map do |line|
-        name, type = line.strip.split("\t", -1)
-        unless name && (name == pool || name.start_with?("#{pool}/")) && type == 'filesystem'
-          raise 'Unknown capacity: incomplete inventory or unsupported volume layout'
+      inventory = read('zfs', 'list', '-Hp', '-r', '-t', 'filesystem,volume', '-o', 'name,type,guid', pool)
+      rows = inventory.lines.map do |line|
+        name, type, guid, extra = line.strip.split("\t", -1)
+        unless name && (name == pool || name.start_with?("#{pool}/")) &&
+               %w[filesystem volume].include?(type) && guid&.match?(/\A[1-9][0-9]*\z/) && !extra
+          raise 'Unknown capacity: incomplete typed pool inventory'
         end
 
-        name
+        [name, type, guid]
       end
+      names = rows.map(&:first)
       raise 'Incomplete or duplicate capacity inventory' unless names.include?(pool) && names.uniq == names
+      raise 'Duplicate capacity GUID inventory' unless rows.map(&:last).uniq.size == rows.size
 
-      names.sort.to_h do |name|
+      rows.sort.to_h do |name, type, guid|
+        required = type == 'filesystem' ? PROPERTIES : VOLUME_PROPERTIES
         properties = {}
-        read('zfs', 'get', '-Hp', '-o', 'property,value', PROPERTIES.join(','), name).lines.each do |line|
-          key, value = line.strip.split("\t", -1)
-          raise 'Duplicate or unknown dataset accounting' if properties.key?(key) || !PROPERTIES.include?(key)
+        read('zfs', 'get', '-Hp', '-o', 'property,value', required.join(','), name).lines.each do |line|
+          key, value, extra = line.strip.split("\t", -1)
+          if properties.key?(key) || !required.include?(key) || extra || value.nil? || value.empty?
+            raise 'Duplicate or unknown dataset accounting'
+          end
 
           properties[key] = key == 'origin' ? value : number(value)
         end
-        raise 'Incomplete dataset capacity accounting' unless properties.keys.sort == PROPERTIES.sort
+        raise 'Incomplete dataset capacity accounting' unless properties.keys.sort == required.sort
 
         parts = name.split('/')
         ancestors = (1...parts.size).map { |n| parts.take(n).join('/') }
         raise 'Missing inherited ancestor accounting' unless (ancestors - names).empty?
 
-        [name, properties]
+        [name, properties.merge('type' => type, 'guid' => guid)]
       end
     end
 
     def snapshots(pool, datasets)
-      rows = read('zfs', 'list', '-Hp', '-r', '-t', 'snapshot', '-o', 'name,used,clones', pool).lines.map do |line|
-        name, used, clones = line.strip.split("\t", -1)
-        raise 'Invalid snapshot accounting' unless name&.include?('@') && datasets.key?(name.split('@').first) && clones
+      inventory = read('zfs', 'list', '-Hp', '-r', '-t', 'snapshot', '-o', 'name,guid,used,clones,userrefs', pool)
+      rows = inventory.lines.map do |line|
+        name, guid, used, clones, holds, extra = line.strip.split("\t", -1)
+        unless name&.match?(/\A[^@]+@[^@]+\z/) && datasets.key?(name.split('@').first) &&
+               guid&.match?(/\A[1-9][0-9]*\z/) && clones && !clones.empty? && !extra
+          raise 'Invalid snapshot accounting'
+        end
 
-        { 'name' => name, 'used' => number(used), 'clones' => clones }
+        { 'name' => name, 'guid' => guid, 'used' => number(used), 'clones' => clones, 'userrefs' => number(holds) }
       end
       raise 'Duplicate snapshot accounting' unless rows.map { |row| row['name'] }.uniq.size == rows.size
+
+      ids = rows.map { |row| row['guid'] } + datasets.values.map { |props| props.fetch('guid') }
+      raise 'Duplicate snapshot/dataset GUID accounting' unless ids.uniq == ids
+
+      rows.each do |row|
+        clones = row['clones'] == '-' ? [] : row['clones'].split(',', -1)
+        unless clones.uniq == clones && clones.all? { |name| datasets[name]&.fetch('origin') == row['name'] }
+          raise 'Unknown capacity: inconsistent snapshot clone dependencies'
+        end
+      end
+      datasets.each do |name, props|
+        next if props['origin'] == '-'
+        next if rows.any? { |row| row['name'] == props['origin'] && row['clones'].split(',').include?(name) }
+
+        raise 'Unknown capacity: missing origin/dependency accounting'
+      end
 
       rows.sort_by { |row| row.fetch('name') }
     end
 
-    def validate_layout!(host, datasets, snapshots, stage)
+    def in_tree?(name, root)
+      name == root || name.start_with?("#{root}/")
+    end
+
+    def affected_datasets(host, source, datasets, stage)
+      raise 'Unknown capacity stage' unless %w[backup activation].include?(stage)
+
+      roots = host.values_at('current', 'target') + [source.fetch('dataset')]
+      if roots.uniq.size != 3 || roots.combination(2).any? { |a, b| in_tree?(a, b) || in_tree?(b, a) }
+        raise 'Unknown capacity: overlapping source/current/target trees'
+      end
+
+      affected = datasets.keys.select { |name| roots.any? { |root| in_tree?(name, root) } }
+      roots.each do |root|
+        parts = root.split('/')
+        affected.concat((1...parts.size).map { |n| parts.take(n).join('/') })
+      end
+      affected = affected.uniq.sort
+      if datasets.keys.any? { |name| name.start_with?("#{source.fetch('dataset')}/") }
+        raise 'Unknown capacity: source inventory is no longer one immutable filesystem'
+      end
+
+      affected.each do |name|
+        raise 'Missing affected ancestor accounting' unless datasets.key?(name)
+        unless datasets[name]['type'] == 'filesystem'
+          raise "Unknown capacity: unsupported volume in affected closure: #{name}"
+        end
+      end
+      bindings = host.fetch('current_tree') + host.fetch('alternate_tree') +
+                 [{ 'dataset' => source.fetch('dataset'), 'guid' => source.fetch('guid') }]
+      bindings.each do |row|
+        raise 'Changed affected dataset GUID' unless datasets[row.fetch('dataset')]&.fetch('guid') == row.fetch('guid')
+      end
+      targets = datasets.keys.select { |name| in_tree?(name, host.fetch('target')) }.sort
+      unless targets == host.fetch('alternate_tree').map { |row| row.fetch('dataset') }.sort
+        raise 'Incomplete bound alternate-tree capacity inventory'
+      end
+
+      affected
+    end
+
+    def validate_layout!(host, source, datasets, snapshots, stage)
       current = host.fetch('current')
       target = host.fetch('target')
       expected = host.fetch('current_tree').map { |row| row.fetch('dataset') }.sort
@@ -180,11 +254,25 @@ module Nest
           raise 'Unknown capacity: target snapshots may collide during promotion'
         end
         next if row['clones'] == '-'
-        next if stage != 'backup' && row['clones'].split(',').all? do |clone|
-          clone == target || clone.start_with?("#{target}/")
-        end
+
+        clones = row['clones'].split(',')
+        roots = [current, target, source.fetch('dataset')]
+        next unless ([name] + clones).any? { |entry| roots.any? { |root| in_tree?(entry, root) } }
+        # Retain old origins; the exact bound alternate is their only dependent.
+        next if in_tree?(name, current) && clones == [name.sub(current, target)] &&
+                datasets.fetch(clones.first).fetch('origin') == row['name']
 
         raise 'Unknown capacity: snapshot clone dependencies'
+      end
+      datasets.each do |name, props|
+        next unless [current, target, source.fetch('dataset')].any? { |root| in_tree?(name, root) }
+        next if props['origin'] == '-'
+        next if in_tree?(name, target) && snapshots.any? do |row|
+          row['name'] == props['origin'] && row['name'].split('@').first == name.sub(target, current) &&
+          row['clones'] == name
+        end
+
+        raise 'Unknown capacity: affected origin dependency crosses closure'
       end
     end
   end

@@ -70,6 +70,21 @@ RSpec.describe Nest::UpdateTransaction, 'postboot lifecycle' do
     expect(transaction.export('cycle')).to include('schema' => 2, 'state' => 'finalized')
   end
 
+  it 'retains old r2 accounting through acceptance and finalization without retrofitting its contract' do
+    data = store.read('cycle')
+    data['capacity'].delete('accounting_contract')
+    data['capacity']['checks'].each do |check|
+      check['observations'].delete('accounting_contract')
+      check['observations_sha256'] = Digest::SHA256.hexdigest(JSON.generate(check['observations']))
+    end
+    store.write('cycle', data)
+    historical = data['capacity']
+    expect(transaction.export('cycle')['capacity']).to eq(historical)
+    expect(accept['accepted']).to be(true)
+    expect(transaction.finalize('cycle', cleanup: 'owned')['finalized']).to be(true)
+    expect(transaction.export('cycle')['capacity']).to eq(historical)
+  end
+
   it 'never treats prepare or a changed boot as acceptance' do
     expect { transaction.finalize('cycle', cleanup: 'owned') }.to raise_error(/requires accepted/)
     expect { transaction.accept('cycle', evidence: evidence) }.to raise_error(/Postboot/)

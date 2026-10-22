@@ -49,38 +49,56 @@ It never invokes an invented promote dry-run. Probes are read-only:
 
 - `zpool get -Hp` size, allocated, free and freeing. Freeing is observed but
   never credited. Size must equal allocated plus free.
-- An explicit whole-pool filesystem/volume inventory and `zfs get -Hp` available,
+- An explicit whole-pool filesystem/volume inventory with positive unique GUIDs
+  and `zfs get -Hp` available,
   used, usedbysnapshots, referenced, logicalreferenced, quota, refquota,
-  reservation, refreservation and origin for every filesystem. Missing ancestors,
-  incomplete properties, nonnumeric accounting and unsupported volumes refuse.
-- Whole-pool snapshot name, used and clone dependencies. Duplicate/invalid
+  reservation, refreservation and origin for every filesystem. Volumes instead
+  report used, usedbysnapshots, referenced, logicalreferenced, reservation,
+  refreservation, volsize, volblocksize and origin; filesystem-only available,
+  quota and refquota are not requested or synthesized for them. Missing ancestors,
+  incomplete properties and nonnumeric accounting refuse.
+- Whole-pool snapshot name, GUID, used, clone dependencies and userrefs (holds).
+  Origins and clone lists must be reciprocal within the complete pool inventory.
+  Duplicate/invalid
   inventories and failed native reads refuse, never become zero or success.
 - Checked `du --apparent-size --block-size=1 --summarize --one-file-system` on the
   immutable local source. The lower bound is the maximum of this apparent size,
   referenced and logicalreferenced. Sparse holes and compression are not a way
   to admit a tiny write budget. No content checksum is claimed.
 
-Supported admission is intentionally narrow: all observed filesystems in the
-pool must have unlimited quota/refquota and zero reservation/refreservation.
-This includes each inherited ancestor and the source. Even a generous finite
-limit or unrelated reservation refuses as unknown: this version does not claim
+Supported admission uses the exact affected closure: current and selected target
+trees, the immutable source, and every ancestor of those roots. Source/current/
+target overlap refuses. Whole-pool typed inventory must match the host's exact
+current/alternate tree names and GUIDs and the source GUID. A volume anywhere
+inside this closure remains unsupported. Unrelated swap/fscache volumes and
+sibling finite PVC limits/reservations are observed, not treated as affected
+filesystem limits. Their allocations and reservations are never credited back.
+Native affected `available` and whole-pool physical free remain independent gates.
+
+All affected filesystems, including inherited ancestors and source, must have
+unlimited quota/refquota and zero reservation/refreservation. Even a generous
+finite affected limit refuses precisely as unknown: this version does not claim
 a complete finite-limit/promotion algebra. It never converts quota to refquota,
 relaxes reservations or uses deletion of the old alternate as headroom.
 
 Current BE datasets must have no origin dependency. Before backup the exact
-recursive snapshot name must be absent. Snapshot clones must be absent before
-backup; retained alternate snapshots refuse. Before activation each target
+recursive snapshot name must be absent. The preexisting bound alternate may
+originate in corresponding current-tree snapshots (including the ordinary old
+`beadm-clone-A-to-B` origins when current is B): each snapshot must have only
+that exact alternate dataset as its clone, with reciprocal origin and matching
+dataset GUIDs. Those origin snapshots are retained, not cleanup candidates.
+Retained alternate snapshots refuse. Before activation each target
 origin must be the exact current-dataset clone snapshot, whose sole clone is
 that target dataset. Target snapshots refuse because promotion can transfer
-names and collide. Other ambiguous snapshot/clone dependencies refuse. Thus
-some otherwise usable pools (including retained clone-dependent old A/B
-layouts) deliberately need separate engineering inspection; there is no
-cleanup-to-fit path in this CLI.
+names and collide. Shared, unknown, cross-tree or source-touching dependencies
+refuse. Completely unrelated held snapshots and reciprocal clone trees are
+reported without authorizing their deletion. Current origins still refuse;
+there is no cleanup-to-fit path, origin deletion or new destruction behavior.
 
 The conservative promotion accounting bound is the sum of current-tree `used`
 values, which already includes snapshot/descendant usage and deliberately may
 double-count descendants. Promotion budget must cover that bound. With all
-finite logical limits/reservations refused, every observed filesystem's
+finite affected logical limits/reservations refused, every affected filesystem's
 `available` must still cover the sum of write plus promotion budgets. Logical
 available is a separate native observation that incorporates native pool/slop
 and logical availability rules; it is not replaced by physical free.
@@ -118,11 +136,14 @@ and `org.nest:expectations` do not substitute for `org.nest:release` here.
 
 ## Durable gate and historical records
 
-New schema-1 preparation adds `capacity` with canonical `policy`, `policy_sha256`
+New schema-1 preparation adds `capacity` with `accounting_contract: 2`, canonical `policy`, `policy_sha256`
 and a bounded `checks` array (latest 16 observations). Each check carries verdict,
 policy digest, safe observations, observations digest and, for fresh rechecks,
 UTC `checked_at`. The existing atomic fsync/rename/readback and flock protect
 these alongside the original release/host/source/policy bindings.
+Every new observation includes the same `accounting_contract: 2` and the sorted
+`affected_datasets` closure, covered by its observation digest. Mixed/unknown
+contracts refuse. The transaction and policy schema numbers remain unchanged.
 
 Recheck occurs on entry to unfinished preparation (including safe copy-only
 resume), before copy, and before backup and activation. Backup/activation are
@@ -135,11 +156,14 @@ no policy path because canonical policy lives in the receipt; an optional path
 must canonicalize to exactly that policy. Native failures and safe-copy-only
 resume rules remain unchanged.
 
-Historical preparation without this gate remains readable/exportable. It cannot
+Historical preparation without this gate or with unversioned r2 accounting
+remains readable/exportable, retaining its exact old evidence. It cannot
 resume mutation or be retrofitted with a policy: export the report and inspect
 native state for manual recovery, never replay. Historical accepted/finalized
 lifecycle and reports retain their previous semantics and do not require a
-source publisher or new accounting. Reports never export raw machine-id.
+source publisher or new accounting. Prepared historical evidence may still
+enter the existing postboot acceptance lifecycle, never preparation replay.
+No old check is relabeled as contract 2. Reports never export raw machine-id.
 
 All tests use fake native inventories, disposable ordinary directories, and
 real process/flock/crash fixtures. They do not establish live promotion, A/B
