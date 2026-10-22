@@ -36,6 +36,7 @@ RSpec.describe Nest::UpdateObservation do
           'fixture' => { 'org.nest:host-id' => 'f' * 32 },
           'fixture/updates' => { 'mountpoint' => @state, 'readonly' => 'off', 'guid' => '401' },
           'fixture/releases/one' => { 'readonly' => 'on', 'org.nest:release' => release,
+                                      'org.nest:host' => Socket.gethostname, 'mountpoint' => @source,
                                       'guid' => '301', 'createtxg' => '18' }
         },
         'pools' => { 'fixture' => { 'guid' => '101', 'bootfs' => 'fixture/ROOT/A' } },
@@ -69,6 +70,8 @@ RSpec.describe Nest::UpdateObservation do
   before do
     allow(observer).to receive(:machine_id).and_return('f' * 32)
     allow(observer).to receive(:boot_id).and_return('boot-one')
+    # Native command tests use unprivileged directories; trust metadata has separate tests.
+    allow(observer).to receive(:trusted_source_path!).and_return(true)
   end
 
   def publish
@@ -122,6 +125,46 @@ RSpec.describe Nest::UpdateObservation do
     @data['properties']['fixture/releases/one']['org.nest:release'] = 'other'
     publish
     expect { observer.source(@source, release) }.to raise_error(/immutable/)
+  end
+
+  it 'refuses wrong source host, source-pool binding, non-dedicated mount and malformed TXG' do
+    props = @data['properties']['fixture/releases/one']
+    props['org.nest:host'] = 'another-host'
+    publish
+    expect { observer.source(@source, release) }.to raise_error(/host-local/)
+    props['org.nest:host'] = Socket.gethostname
+    @data['properties']['fixture']['org.nest:host-id'] = 'e' * 32
+    publish
+    expect { observer.source(@source, release) }.to raise_error(/host-local/)
+    @data['properties']['fixture']['org.nest:host-id'] = 'f' * 32
+    props['mountpoint'] = '/other'
+    publish
+    expect { observer.source(@source, release) }.to raise_error(/immutable/)
+    props['mountpoint'] = @source
+    props['createtxg'] = '-'
+    publish
+    expect { observer.source(@source, release) }.to raise_error(/TXG/)
+  end
+
+  it 'checks source and ancestor ownership and write permissions without reading live identity' do
+    allow(observer).to receive(:trusted_source_path!).and_call_original
+    allow(File).to receive(:lstat).and_call_original
+    safe = instance_double(File::Stat, directory?: true, uid: 0, mode: 0o40755)
+    unsafe = instance_double(File::Stat, directory?: true, uid: 0, mode: 0o40777)
+    foreign = instance_double(File::Stat, directory?: true, uid: 1000, mode: 0o40755)
+    path = @source
+    loop do
+      allow(File).to receive(:lstat).with(path).and_return(safe)
+      break if path == '/'
+
+      path = File.dirname(path)
+    end
+    expect { observer.trusted_source_path!(@source) }.not_to raise_error
+    allow(File).to receive(:lstat).with(File.dirname(@source)).and_return(unsafe)
+    expect { observer.trusted_source_path!(@source) }.to raise_error(/Unsafe root generation/)
+    allow(File).to receive(:lstat).with(File.dirname(@source)).and_return(safe)
+    allow(File).to receive(:lstat).with(@source).and_return(foreign)
+    expect { observer.trusted_source_path!(@source) }.to raise_error(/Unsafe root generation/)
   end
 
   it 'rejects nested source filesystems, stacked roots, and symlink source aliases' do

@@ -79,6 +79,8 @@ module Nest
       target = filename(id)
       temporary = File.join(path, ".receipt-#{SecureRandom.hex(16)}")
       payload = JSON.generate(record)
+      raise 'Transaction record is too large' if payload.bytesize > 1_048_576
+
       begin
         File.open(temporary, File::WRONLY | File::CREAT | File::EXCL | File::NOFOLLOW, 0o600) do |file|
           file.write(payload)

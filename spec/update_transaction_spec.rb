@@ -5,6 +5,7 @@ require 'fileutils'
 require 'open3'
 require 'rbconfig'
 require 'nest/update_transaction'
+require 'nest/cli'
 require_relative 'fixtures/transaction_worker'
 
 RSpec.describe Nest::UpdateTransaction do
@@ -188,7 +189,9 @@ RSpec.describe Nest::UpdateTransaction do
   end
 
   it 'does not create a lock or state while planning' do
-    expect(transaction.plan(release: release, root_generation: '/fixture/release')).to include('read_only' => true)
+    expect(transaction.plan(release: release, root_generation: '/fixture/release')).to include(
+      'read_only' => true, 'capacity_admission' => 'unknown'
+    )
     expect(Dir.children(store.path)).to be_empty
   end
 
@@ -276,12 +279,144 @@ RSpec.describe Nest::UpdateTransaction do
     expect(effects).to eq(before)
   end
 
+  it 'requires policy before native updater construction and persists nothing beyond the lock' do
+    expect(transaction).not_to receive(:native_updater)
+    expect do
+      transaction.prepare('cycle', release: release, root_generation: '/fixture/release')
+    end.to raise_error(/requires --capacity-policy/)
+    expect(store.ids).to be_empty
+    expect(File.exist?(File.join(@directory, 'effects'))).to be(false)
+  end
+
+  it 'routes the actual CLI to the real missing-policy gate without native effects' do
+    real_transaction = transaction
+    allow(described_class).to receive(:new).and_return(real_transaction)
+    output = StringIO.new
+    original = $stdout
+    begin
+      $stdout = output
+      expect do
+        args = ['reset', '--transaction=cycle', "--release=#{release}"]
+        args += %w[--root-generation=/fixture/release --format=json]
+        Nest::CLI::Main.start(args)
+      end.to raise_error(SystemExit) { |error| expect(error.status).to eq(3) }
+    ensure
+      $stdout = original
+    end
+    expect(JSON.parse(output.string)['error']).to include('requires --capacity-policy')
+    expect(store.ids).to be_empty
+    expect(File.exist?(File.join(@directory, 'effects'))).to be(false)
+  end
+
+  it 'refuses malformed and oversized policies in actual preparation without effects' do
+    path = TransactionFixture.capacity_policy(@directory)
+    ['{', ' ' * 16_385, '{"schema":true}', '{"schema":1,"schema":1}'].each do |text|
+      File.write(path, text)
+      expect do
+        transaction.prepare('cycle', release: release, root_generation: '/fixture/release', capacity_policy: path)
+      end.to raise_error(StandardError)
+      expect(store.ids).to be_empty
+    end
+    expect(File.exist?(File.join(@directory, 'effects'))).to be(false)
+  end
+
+  it 'binds policy durably before effects and refuses replacement on interrupted-copy resume' do
+    worker('new', crash: 'sync')
+    receipt = store.read('cycle')
+    expect(receipt['capacity']['policy_sha256']).to eq(Nest::CapacityPolicy.digest(receipt['capacity']['policy']))
+    path = TransactionFixture.capacity_policy(@directory)
+    policy = JSON.parse(File.read(path)).merge('write_budget_bytes' => 9999)
+    File.write(path, JSON.generate(policy))
+    expect do
+      transaction.prepare('cycle', release: nil, root_generation: nil, resume: true, capacity_policy: path)
+    end.to raise_error(/cannot replace/)
+    expect(effects).to eq(%w[backup mount sync])
+    change_identity { |data| data['capacity_denied'] = true }
+    _out, err, status = worker('resume')
+    expect(status.exitstatus).to eq(7)
+    expect(err).to include('accounting changed')
+    expect(effects).to eq(%w[backup mount sync])
+  end
+
+  it 'rechecks accounting after durable backup intent and refuses effects when it changes' do
+    allow(store).to receive(:write).and_wrap_original do |method, id, data|
+      method.call(id, data)
+      if data['phases'].last&.slice('phase', 'state') == { 'phase' => 'backup', 'state' => 'started' }
+        change_identity { |identity| identity['capacity_denied'] = true }
+      end
+    end
+    updater = double('never run')
+    expect(updater).not_to receive(:update)
+    expect do
+      transaction.prepare('cycle', release: release, root_generation: '/fixture/release', updater: updater,
+                                   capacity_policy: TransactionFixture.capacity_policy(@directory))
+    end.to raise_error(/accounting changed/)
+    expect(store.read('cycle')['phases'].last).to include('state' => 'started', 'phase' => 'backup')
+    expect(File.exist?(File.join(@directory, 'effects'))).to be(false)
+  end
+
+  it 'rechecks accounting after durable activation intent before selecting bootfs' do
+    allow(store).to receive(:write).and_wrap_original do |method, id, data|
+      method.call(id, data)
+      if data['phases'].last&.slice('phase', 'state') == { 'phase' => 'activate', 'state' => 'started' }
+        change_identity { |identity| identity['capacity_denied'] = true }
+      end
+    end
+    expect do
+      transaction.prepare('cycle', release: release, root_generation: '/fixture/release',
+                                   updater: TransactionFixture::Updater.new(@directory, store),
+                                   capacity_policy: TransactionFixture.capacity_policy(@directory))
+    end.to raise_error(/accounting changed/)
+    expect(observation.host['next_boot']).to eq('fixture/ROOT/A')
+    expect(effects).to eq(%w[backup mount sync kernel unmount])
+  end
+
+  it 'exports historical preparation but refuses capacity retrofit or mutation, never replaying phases' do
+    worker('new', crash: 'sync')
+    data = store.read('cycle')
+    data.delete('capacity')
+    store.write('cycle', data)
+    expect(transaction.export('cycle')['state']).to eq('pending')
+    expect do
+      transaction.prepare('cycle', release: nil, root_generation: nil, resume: true,
+                                   capacity_policy: TransactionFixture.capacity_policy(@directory))
+    end.to raise_error(/Historical preparation lacks capacity.*never replay/)
+    expect(effects).to eq(%w[backup mount sync])
+  end
+
+  it 'refuses corrupt persisted policy or observation digests before resume or export' do
+    worker('new', crash: 'sync')
+    original = store.read('cycle')
+    %w[policy_sha256 observations_sha256].each do |key|
+      data = JSON.parse(JSON.generate(original))
+      if key == 'policy_sha256'
+        data['capacity'][key] = 'bad'
+      else
+        data['capacity']['checks'][0][key] = 'bad'
+      end
+      store.write('cycle', data)
+      expect { transaction.export('cycle') }.to raise_error(/digest/)
+      expect do
+        transaction.prepare('cycle', release: nil, root_generation: nil, resume: true)
+      end.to raise_error(/digest/)
+    end
+    expect(effects).to eq(%w[backup mount sync])
+  end
+
+  it 'does not replay completed preparation for new capacity evidence' do
+    worker('new')
+    expect(observation).not_to receive(:capacity)
+    expect(transaction.prepare('cycle', release: nil, root_generation: nil, resume: true)['success']).to be(true)
+    expect(effects).to eq(described_class::PHASES)
+  end
+
   it 'reports readback/fsync failure and does not run a phase after the failed intent write' do
     allow(store).to receive(:write).and_raise(Errno::EIO)
     updater = double('updater')
     expect(updater).not_to receive(:update)
     expect do
-      transaction.prepare('cycle', release: release, root_generation: '/fixture/release', updater: updater)
+      transaction.prepare('cycle', release: release, root_generation: '/fixture/release', updater: updater,
+                                   capacity_policy: TransactionFixture.capacity_policy(@directory))
     end.to raise_error(Errno::EIO)
     expect(File.exist?(File.join(@directory, 'effects'))).to be(false)
   end
