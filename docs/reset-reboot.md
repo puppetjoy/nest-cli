@@ -112,6 +112,10 @@ the action conservatively exits nonzero. Do not reinterpret that exit as permiss
 to submit again. JSON errors do not include command exception/output material.
 
 Status remains a separate read-only observation of boot ID, current/next and GUIDs.
+For a record containing reboot intent, status also refuses drift of the original
+source/installed policy, unsafe next selection or rollback identity; it checks the
+original prepared invariants on the same boot and exact postboot invariants on a
+changed boot. Historical export still does not require old BE trees to survive.
 `observation.boot_changed` and `observation.expected_target_booted`, not reboot
 intent, describe the actual sampled boot. Wrong/current boot observations cannot
 satisfy acceptance. Acceptance still needs a changed exact target boot, rollback

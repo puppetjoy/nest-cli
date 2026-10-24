@@ -141,6 +141,24 @@ RSpec.describe Nest::UpdateTransaction, 'postboot lifecycle' do
     expect(store.read('cycle')).not_to have_key('reboot')
   end
 
+  %w[next rollback source policy shared].each do |mismatch|
+    it "refuses unsafe reboot status after reconnect with changed #{mismatch}" do
+      allow(transaction).to receive(:reboot_command).and_return(0)
+      transaction.reboot('cycle')
+      boot
+      change_identity do |data|
+        data['host']['next_boot'] = 'fixture/ROOT/A' if mismatch == 'next'
+        data['prior_tree'][0]['guid'] = '999' if mismatch == 'rollback'
+        data['source']['guid'] = '999' if mismatch == 'source'
+        data['policy']['cli_sha256'] = 'changed' if mismatch == 'policy'
+        data['shared_state']['guid'] = '999' if mismatch == 'shared'
+      end
+      expect { transaction.status('cycle') }.to raise_error(StandardError)
+      expect { transaction.reboot('cycle', plan: true) }.to raise_error(StandardError)
+      expect { transaction.reboot('cycle') }.to raise_error(/already requested/)
+    end
+  end
+
   it 'does not launch when durable intent readback fails and refuses retry after reconnect' do
     allow(store).to receive(:write).and_wrap_original do |original, id, data|
       original.call(id, data)

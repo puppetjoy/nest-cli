@@ -62,6 +62,7 @@ module Nest
         reason = record.key?('reboot') ? 'already_requested' : 'eligible'
       else
         accepted_host! # A wrong changed boot is unsafe, not merely ineligible.
+        reboot_source_policy! if record.key?('reboot')
         reason = 'already_booted'
       end
       baseline = record
@@ -81,6 +82,16 @@ module Nest
 
       validate_identity!
       @observation.target_unmounted!(record.fetch('host').fetch('target'))
+    end
+
+    def reboot_source_policy!
+      source = record.fetch('source')
+      raise 'Immutable root generation changed' unless
+        @observation.source(source.fetch('path'), record.fetch('release')) == source
+
+      return if @observation.policy == record.fetch('policy')
+
+      raise 'Reset policy or installed CLI changed'
     end
 
     def reboot_requested

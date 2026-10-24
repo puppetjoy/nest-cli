@@ -70,6 +70,15 @@ module Nest
       observed = bound_host!
       baseline = record.fetch('host')
 
+      if record.key?('reboot')
+        if observed.fetch('boot_id') == baseline.fetch('boot_id')
+          reboot_identity!
+        else
+          accepted_host!
+          reboot_source_policy!
+        end
+      end
+
       known_current = observed['current'] == baseline['current'] && observed['current_tree'] == baseline['current_tree']
       known_target = observed['current'] == baseline['target'] && observed['current_tree'] == record['target_tree']
       raise 'Observed current BE identity mismatch' unless known_current || known_target
