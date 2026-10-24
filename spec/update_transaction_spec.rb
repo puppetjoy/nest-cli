@@ -4,6 +4,7 @@ require 'tmpdir'
 require 'fileutils'
 require 'open3'
 require 'rbconfig'
+require 'pty'
 require 'nest/update_transaction'
 require 'nest/cli'
 require_relative 'fixtures/transaction_worker'
@@ -458,5 +459,185 @@ RSpec.describe Nest::UpdateTransaction do
                                    capacity_policy: TransactionFixture.capacity_policy(@directory))
     end.to raise_error(Errno::EIO)
     expect(File.exist?(File.join(@directory, 'effects'))).to be(false)
+  end
+
+  def reboot_worker(*args, fault: nil, native_exit: '0')
+    Open3.capture3({ 'REBOOT_FAULT' => fault, 'REBOOT_EXIT' => native_exit }, RbConfig.ruby,
+                   '-I', File.expand_path('../lib', __dir__),
+                   File.join(__dir__, 'fixtures/reboot_worker.rb'), @directory, 'reset', *args, '--format=json')
+  end
+
+  def reboot_effects
+    path = File.join(@directory, 'reboots')
+    File.exist?(path) ? File.readlines(path, chomp: true) : []
+  end
+
+  %w[0 23 launch].each do |outcome|
+    it "preserves human result/exception semantics on a true TTY for #{outcome}" do
+      worker('new')
+      env = { 'REBOOT_EXIT' => outcome == '23' ? '23' : '0', 'REBOOT_FAULT' => outcome == 'launch' ? 'launch' : nil }
+      output = +''
+      status = nil
+      PTY.spawn(env, RbConfig.ruby, '-I', File.expand_path('../lib', __dir__),
+                File.join(__dir__, 'fixtures/reboot_worker.rb'), @directory,
+                'reset', 'reboot', 'cycle', '--execute') do |reader, writer, pid|
+        writer.close
+        begin
+          loop { output << reader.readpartial(4096) }
+        rescue Errno::EIO, EOFError
+          # Linux PTY end of stream.
+        end
+        status = Process.wait2(pid).last
+      end
+      expect(status.exitstatus).to eq(outcome == '0' ? 0 : 2)
+      expect(JSON.parse(output)['reboot_requested']).to eq(outcome == 'launch' ? nil : outcome == '0')
+      expect(output).not_to include('SECRET', 'machine_id')
+    end
+  end
+
+  it 'plans byte-for-byte read-only without a lock and submits exactly once through the actual CLI' do
+    worker('new')
+    File.unlink(File.join(store.path, '.lock'))
+    before = Dir.children(store.path).to_h { |name| [name, File.binread(File.join(store.path, name))] }
+    out, err, status = reboot_worker('reboot', 'cycle', '--plan')
+    expect(status.success?).to be(true), err
+    expect(JSON.parse(out)).to include('read_only' => true, 'reboot_eligible' => true,
+                                       'reboot_reason' => 'eligible', 'reboot_requested' => false)
+    expect(Dir.children(store.path).to_h { |name| [name, File.binread(File.join(store.path, name))] }).to eq(before)
+    expect(reboot_effects).to be_empty
+    out, err, status = reboot_worker('reboot', 'cycle', '--execute')
+    expect(status.success?).to be(true), err
+    expect(JSON.parse(out)).to include('state' => 'prepared', 'success' => true, 'accepted' => false,
+                                       'reboot_requested' => true)
+    expect(store.read('cycle')['reboot']).to include('state' => 'returned', 'native_exit' => 0)
+    expect(reboot_worker('reboot', 'cycle', '--execute').last.success?).to be(false)
+    expect(JSON.parse(reboot_worker('reboot', 'cycle', '--plan').first)).to include(
+      'reboot_eligible' => false, 'reboot_reason' => 'already_requested'
+    )
+    expect(reboot_effects).to eq(['submitted'])
+    expect(worker('resume').last.success?).to be(false)
+    expect(effects).to eq(described_class::PHASES)
+  end
+
+  %w[saved-intent during-command after-return write-returned launch timeout].each do |fault|
+    it "retains ambiguity and never resubmits after #{fault}" do
+      worker('new')
+      out, _err, status = reboot_worker('reboot', 'cycle', '--execute', fault: fault)
+      expect(status.success?).not_to be(true)
+      expect(JSON.parse(out)['reboot_requested']).to be_nil unless status.signaled?
+      expect(store.read('cycle').dig('reboot', 'state')).to eq('intent')
+      before = reboot_effects
+      expect(reboot_worker('reboot', 'cycle', '--execute').last.success?).to be(false)
+      expect(reboot_effects).to eq(before)
+      expect(transaction.status('cycle')['reboot_requested']).to be_nil
+      expect(transaction.export('cycle')['reboot_requested']).to be_nil
+    end
+  end
+
+  it 'retains a known nonzero without conflating it with no attempt or replay permission' do
+    worker('new')
+    out, _err, status = reboot_worker('reboot', 'cycle', '--execute', native_exit: '23')
+    expect(status.exitstatus).to eq(2)
+    expect(JSON.parse(out)).to include('success' => true, 'reboot_requested' => false)
+    expect(JSON.parse(out)['reboot']).to include('state' => 'returned', 'native_exit' => 23)
+    expect(reboot_worker('reboot', 'cycle', '--execute').last.success?).to be(false)
+    expect(reboot_effects).to eq(['submitted'])
+  end
+
+  it 'does not launch after intent write failure' do
+    worker('new')
+    expect(reboot_worker('reboot', 'cycle', '--execute', fault: 'write-intent').last.success?).to be(false)
+    expect(store.read('cycle')).not_to have_key('reboot')
+    expect(reboot_effects).to be_empty
+  end
+
+  it 'serializes real separate-process contenders with the same nonblocking host lock' do
+    worker('new')
+    results = Array.new(8) { Thread.new { reboot_worker('reboot', 'cycle', '--execute') } }.map(&:value)
+    expect(results.count { |result| result.last.success? }).to eq(1)
+    expect(reboot_effects).to eq(['submitted'])
+  end
+
+  %w[--resume --kernel --firmware --step=sync --begin=mount --end=sync --begin=backup --end=activate
+     --noop --test --dry-run --force --hard --unknown
+     --transaction=other --resume-transaction=cycle --release=digest --root-generation=/fixture
+     --capacity-policy=/fixture --evidence=/fixture --cleanup=owned --plan].each do |flag|
+    it "rejects reboot execute combined with #{flag} before submission" do
+      worker('new')
+      expect(reboot_worker('reboot', 'cycle', '--execute', flag).last.success?).to be(false)
+      expect(reboot_effects).to be_empty
+      expect(store.read('cycle')).not_to have_key('reboot')
+    end
+  end
+
+  it 'requires a valid ID and explicit selection and forbids execute on all other routes' do
+    worker('new')
+    [%w[reboot cycle], %w[reboot ../cycle --execute], %w[reboot absent --execute],
+     %w[status cycle --execute], %w[report cycle --execute], %w[accept cycle --execute],
+     %w[finalize cycle --execute], %w[--execute], %w[--transaction=other --execute]].each do |args|
+      expect(reboot_worker(*args).last.success?).to be(false)
+    end
+    expect(reboot_effects).to be_empty
+  end
+
+  {
+    'machine' => ->(data) { data['host']['machine_id'] = 'other' },
+    'hostname' => ->(data) { data['host']['hostname'] = 'other' },
+    'boot' => ->(data) { data['host']['boot_id'] = 'boot-two' },
+    'pool' => ->(data) { data['host']['pool_guid'] = '999' },
+    'current GUID' => ->(data) { data['host']['current_tree'][0]['guid'] = '999' },
+    'target GUID' => ->(data) { data['target_tree'][0]['guid'] = '999' },
+    'next boot' => ->(data) { data['host']['next_boot'] = 'fixture/ROOT/A' },
+    'source' => ->(data) { data['source']['guid'] = '999' },
+    'shared GUID' => ->(data) { data['shared_state']['guid'] = '999' },
+    'filter' => ->(data) { data['policy']['filter_sha256'] = 'other' },
+    'CLI' => ->(data) { data['policy']['cli_sha256'] = 'other' },
+    'mounts' => ->(data) { data['mounted'] = true }
+  }.each do |name, mutation|
+    it "refuses reboot with changed #{name} before intent" do
+      worker('new')
+      change_identity(&mutation)
+      expect(reboot_worker('reboot', 'cycle', '--execute').last.success?).to be(false)
+      expect(reboot_worker('reboot', 'cycle', '--plan').last.success?).to be(false)
+      expect(store.read('cycle')).not_to have_key('reboot')
+      expect(reboot_effects).to be_empty
+    end
+  end
+
+  it 'does not retrofit capacity or failed preparation' do
+    worker('new')
+    original = store.read('cycle')
+    [->(data) { data.delete('capacity') },
+     ->(data) { data['capacity'].delete('accounting_contract') },
+     ->(data) { data['phases'].last['state'] = 'failed' },
+     ->(data) { data['state'] = 'stopped' }, ->(data) { data['state'] = 'pending' }].each do |mutation|
+      data = JSON.parse(JSON.generate(original))
+      mutation.call(data)
+      store.write('cycle', data)
+      expect(reboot_worker('reboot', 'cycle', '--execute').last.success?).to be(false)
+      expect(store.read('cycle')).to eq(data)
+    end
+    expect(reboot_effects).to be_empty
+  end
+
+  it 'validates exact optional fields and provenance on status and historical export' do
+    worker('new')
+    reboot_worker('reboot', 'cycle', '--execute')
+    original = store.read('cycle')
+    [->(data) { data['reboot']['schema'] = 1.0 }, ->(data) { data['reboot']['extra'] = 'SECRET' },
+     ->(data) { data['reboot']['native_exit'] = '0' }, ->(data) { data['reboot']['native_exit'] = 256 },
+     ->(data) { data['reboot']['boot_id'] = 'boot-two' }, ->(data) { data['reboot']['command'] = ['reboot'] },
+     ->(data) { data['reboot']['state'] = 'complete' }, ->(data) { data['reboot']['requested_at'] = false },
+     ->(data) { data['reboot']['requested_at'] = '2000-01-01T00:00:00Z' },
+     ->(data) { data['reboot']['finished_at'] = '2000-01-01T00:00:00Z' },
+     ->(data) { data['reboot']['finished_at'] = '2026-10-24T12:00:00+00:00' },
+     ->(data) { data['phases'].last['native_exit'] = 1 }].each do |mutation|
+      data = JSON.parse(JSON.generate(original))
+      mutation.call(data)
+      store.write('cycle', data)
+      expect { transaction.status('cycle') }.to raise_error(StandardError)
+      expect { transaction.export('cycle') }.to raise_error(StandardError)
+    end
+    expect(reboot_effects).to eq(['submitted'])
   end
 end

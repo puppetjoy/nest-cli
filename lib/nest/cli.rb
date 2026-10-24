@@ -139,6 +139,8 @@ module Nest
     class Main < Thor
       include Nest::CLI
 
+      check_unknown_options! only: :reset
+
       class_option :quiet, aliases: '-q', type: :boolean, default: false, desc: 'Hide most output'
       class_option :debug, type: :boolean, default: false, desc: 'Log debug messages'
       class_option :dry_run, type: :boolean, default: false,
@@ -311,7 +313,8 @@ module Nest
         exit SYSTEM_ERROR
       end
 
-      desc 'reset [status|report|accept|finalize ID] [options]', 'Reset hosts or manage a persisted transaction'
+      desc 'reset [status|report|reboot|accept|finalize ID] [options]', 'Reset hosts or manage a persisted transaction'
+      option :execute, type: :boolean, desc: 'Submit one durable reboot request, for reboot only'
       option :evidence, type: :string, desc: 'Bounded acceptance-evidence JSON file, for accept only'
       option :cleanup, type: :string, desc: 'Explicit owned cleanup policy, for finalize only'
       option :transaction, type: :string, desc: 'Create a durable host preparation transaction'
@@ -323,8 +326,8 @@ module Nest
       option :firmware, aliases: '-f', type: :boolean, desc: 'Just update the firmware'
       option :resume, aliases: '-r', type: :boolean, desc: 'Skip backup step'
       option :step, aliases: '-s', desc: 'Only run this step'
-      option :begin, banner: 'STEP', default: 'backup', desc: 'The first update step'
-      option :end, banner: 'STEP', default: 'activate', desc: 'The last update step'
+      option :begin, banner: 'STEP', desc: 'The first reset step (default: backup)'
+      option :end, banner: 'STEP', desc: 'The last reset step (default: activate)'
       option :noop, aliases: '-n', type: :boolean, desc: 'Run destructive commands in no-op mode'
       option :verbose, aliases: '-v', type: :boolean, desc: 'Run commands with extra verbosity'
       option :test, aliases: '-t', type: :boolean, desc: 'Test rsync with checksums instead of times'
@@ -364,11 +367,14 @@ module Nest
           start = options[:step]
           stop  = options[:step]
         else
-          start = options[:begin] == 'backup' && options[:resume] ? :mount : options[:begin]
-          stop  = options[:end] == 'activate' && options[:test] ? :sync : options[:end]
+          first = options[:begin] || 'backup'
+          last = options[:end] || 'activate'
+          start = first == 'backup' && options[:resume] ? :mount : first
+          stop  = last == 'activate' && options[:test] ? :sync : last
         end
 
         return reset_transaction(action, id) if action || options[:transaction] || options[:resume_transaction]
+        raise '--execute is only supported for reboot' if options.key?(:execute)
         raise 'Evidence/cleanup require reset accept/finalize ID' if options[:evidence] || options[:cleanup]
         if !options[:plan] && (options[:release] || options[:root_generation] || options[:capacity_policy])
           raise 'Release/root generation require --transaction or --plan'
@@ -423,29 +429,45 @@ module Nest
           require_relative 'update_transaction'
           require 'json'
           incompatible = %i[resume kernel firmware step noop test dry_run].any? { |flag| options[flag] }
-          incompatible ||= options[:begin] != 'backup' || options[:end] != 'activate'
+          incompatible ||= (options[:begin] && options[:begin] != 'backup') ||
+                           (options[:end] && options[:end] != 'activate')
+          if action == 'reboot' && %i[begin end resume kernel firmware step noop test dry_run].any? do |flag|
+            options.key?(flag) && !(flag == :dry_run && options[flag] == false)
+          end
+            raise 'Reboot cannot select legacy phases or dry-run options'
+          end
           raise 'Transaction commands cannot be combined with legacy phase/dry-run options' if incompatible
           if options[:transaction] && options[:resume_transaction]
             raise 'Choose --transaction or --resume-transaction, not both'
           end
 
           transaction = Nest::UpdateTransaction.new
+          raise '--execute is only supported for reboot' if options.key?(:execute) && action != 'reboot'
+
           if action
-            unless %w[status report accept finalize].include?(action) && id
-              raise 'Expected reset status/report/accept/finalize ID'
+            unless %w[status report reboot accept finalize].include?(action) && id
+              raise 'Expected reset status/report/reboot/accept/finalize ID'
             end
 
             raise 'Observation cannot prepare a transaction' if options[:transaction] || options[:resume_transaction]
             if options[:release] || options[:root_generation] || options[:capacity_policy]
               raise 'Lifecycle commands use recorded release/source/policy'
             end
-            raise '--plan is only supported for finalize' if options[:plan] && action != 'finalize'
+            if options[:plan] && !%w[finalize reboot].include?(action)
+              raise '--plan is only supported for finalize or reboot'
+            end
             raise '--evidence is only supported for accept' if options[:evidence] && action != 'accept'
             raise '--cleanup is only supported for finalize' if options[:cleanup] && action != 'finalize'
 
             report = case action
                      when 'status' then transaction.status(id)
                      when 'report' then transaction.export(id)
+                     when 'reboot'
+                       unless (options[:plan] == true) ^ (options[:execute] == true)
+                         raise 'Reboot requires exactly one of --plan or --execute'
+                       end
+
+                       transaction.reboot(id, plan: options[:plan] == true)
                      when 'accept'
                        raise 'Accept requires --evidence FILE' unless options[:evidence]
 
@@ -453,7 +475,7 @@ module Nest
                      when 'finalize'
                        transaction.finalize(id, cleanup: options[:cleanup], plan: options[:plan])
                      end
-            success = true
+            success = action != 'reboot' || options[:plan] || transaction.reboot_succeeded
           else
             raise 'Evidence/cleanup require reset accept/finalize ID' if options[:evidence] || options[:cleanup]
             raise 'Use reset --plan --release DIGEST --root-generation PATH without a transaction ID' if options[:plan]

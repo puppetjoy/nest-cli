@@ -4,7 +4,8 @@ This is the R02 / CLI R10 preparation and report slice. It wraps the native
 backup, mount, sync, kernel, unmount and activation phases with a host lock and
 write-ahead receipts. It does not make ZFS promotion, rsync, shared `/boot` or
 Puppet atomic, undo a partially completed phase, or implement fleet rollout.
-Reboot and transaction abandonment are not supported commands. Explicit supplied
+Explicit reboot requests are documented in [reset-reboot.md](reset-reboot.md);
+transaction abandonment is not supported. Explicit supplied
 host acceptance and R04 finalization are documented in [reset-lifecycle.md](reset-lifecycle.md).
 A prepared host is not a booted/accepted host. Schema-1 details below remain the
 historical preparation/export contract; only explicit acceptance advances to schema 2.
@@ -207,8 +208,10 @@ Export kind is `reset_transaction_report`, schema 1. It projects those safe
 bindings, phases and timestamps; excludes raw machine ID, replaces it with
 `host_identity_sha256`, and omits command output, exception text, environment,
 keys, journals, package CONTENTS and backup payloads. `success` means only state
-`prepared`. For schema 1, `reboot_requested`, `accepted` and `finalized` remain
-false; explicit acceptance transitions to schema 2. A false reboot flag is not
+`prepared`. Without an optional reboot receipt, `reboot_requested` remains false;
+[explicit reboot requests](reset-reboot.md) add three-valued submission semantics
+without changing the schema. `accepted` and `finalized` remain false in schema 1;
+explicit acceptance transitions to schema 2. A false reboot flag is not
 proof that an external actor never requested a reboot. Status adds `observation` with observed `boot_id`,
 `boot_changed`, `current`, `next_boot`, `expected_target_booted` and
 `accepted: false`. The stored prepare outcome remains separate from observation.

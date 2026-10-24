@@ -93,6 +93,94 @@ RSpec.describe Nest::UpdateTransaction, 'postboot lifecycle' do
     expect { transaction.finalize('cycle', cleanup: 'owned', plan: true) }.to raise_error(/requires accepted/)
   end
 
+  [0, 23, nil].each do |native_exit|
+    it "preserves reboot outcome #{native_exit.inspect} through actual boot observation, acceptance and finalize" do
+      allow(transaction).to receive(:reboot_command).and_return(native_exit)
+      requested = transaction.reboot('cycle').fetch('reboot')
+      expect(transaction.status('cycle')['observation']).to include(
+        'boot_changed' => false, 'expected_target_booted' => false
+      )
+      expect { transaction.accept('cycle', evidence: evidence) }.to raise_error(/Postboot/)
+      boot
+      expect(transaction.status('cycle')['observation']).to include(
+        'boot_changed' => true, 'expected_target_booted' => true, 'accepted' => false
+      )
+      expect(transaction.reboot('cycle', plan: true)).to include(
+        'reboot_eligible' => false, 'reboot_reason' => 'already_booted'
+      )
+      expect { transaction.reboot('cycle') }.to raise_error(/already requested/)
+      expect(transaction.accept('cycle', evidence: evidence)['reboot']).to eq(requested)
+      expect(transaction.finalize('cycle', cleanup: 'owned')['reboot']).to eq(requested)
+      expect(transaction.export('cycle')['reboot']).to eq(requested)
+      data = store.read('cycle')
+      data['reboot']['command'] = ['bad']
+      store.write('cycle', data)
+      expect { transaction.export('cycle') }.to raise_error(/reboot receipt/)
+      expect { transaction.finalize('cycle', cleanup: 'owned') }.to raise_error(/reboot receipt/)
+    end
+  end
+
+  %w[next rollback wrong_boot].each do |mismatch|
+    it "refuses changed-boot eligibility with #{mismatch} rather than announcing a safe reboot" do
+      boot
+      change_identity do |data|
+        data['host']['next_boot'] = 'fixture/ROOT/A' if mismatch == 'next'
+        data['prior_tree'][0]['guid'] = '999' if mismatch == 'rollback'
+        data['host']['current_tree'][0]['guid'] = '999' if mismatch == 'wrong_boot'
+      end
+      expect { transaction.reboot('cycle', plan: true) }.to raise_error(/identity mismatch/)
+      expect { transaction.reboot('cycle') }.to raise_error(/identity mismatch/)
+      expect(store.read('cycle')).not_to have_key('reboot')
+    end
+  end
+
+  it 'reobserves installed policy immediately before intent and leaves no receipt on drift' do
+    allow(observation).to receive(:policy).and_return(observation.policy, { 'cli_sha256' => 'changed' })
+    expect(transaction).not_to receive(:reboot_command)
+    expect { transaction.reboot('cycle') }.to raise_error(/installed CLI changed/)
+    expect(store.read('cycle')).not_to have_key('reboot')
+  end
+
+  %w[next rollback source policy shared].each do |mismatch|
+    it "refuses unsafe reboot status after reconnect with changed #{mismatch}" do
+      allow(transaction).to receive(:reboot_command).and_return(0)
+      transaction.reboot('cycle')
+      boot
+      change_identity do |data|
+        data['host']['next_boot'] = 'fixture/ROOT/A' if mismatch == 'next'
+        data['prior_tree'][0]['guid'] = '999' if mismatch == 'rollback'
+        data['source']['guid'] = '999' if mismatch == 'source'
+        data['policy']['cli_sha256'] = 'changed' if mismatch == 'policy'
+        data['shared_state']['guid'] = '999' if mismatch == 'shared'
+      end
+      expect { transaction.status('cycle') }.to raise_error(StandardError)
+      expect { transaction.reboot('cycle', plan: true) }.to raise_error(StandardError)
+      expect { transaction.reboot('cycle') }.to raise_error(/already requested/)
+    end
+  end
+
+  it 'does not launch when durable intent readback fails and refuses retry after reconnect' do
+    allow(store).to receive(:write).and_wrap_original do |original, id, data|
+      original.call(id, data)
+      raise 'Fixture lost readback' if data.key?('reboot')
+    end
+    expect(transaction).not_to receive(:reboot_command)
+    expect { transaction.reboot('cycle') }.to raise_error(/readback/)
+    expect(store.read('cycle').dig('reboot', 'state')).to eq('intent')
+    expect { transaction.reboot('cycle') }.to raise_error(/already requested/)
+  end
+
+  it 'does not report action success when completion fsync/readback fails after rename' do
+    allow(transaction).to receive(:reboot_command).and_return(0)
+    allow(store).to receive(:write).and_wrap_original do |original, id, data|
+      original.call(id, data)
+      raise 'Fixture completion fsync failure' if data.dig('reboot', 'state') == 'returned'
+    end
+    expect(transaction.reboot('cycle')['reboot_requested']).to be(true)
+    expect(transaction.reboot_succeeded).to be(false)
+    expect { transaction.reboot('cycle') }.to raise_error(/already requested/)
+  end
+
   it 'accepts bound named gates then finalizes ordinary A/B without extra deletion or plan writes' do
     expect(accept).to include('schema' => 2, 'accepted' => true, 'finalized' => false)
     before = File.binread(File.join(store.path, 'cycle.json'))

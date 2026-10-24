@@ -1,7 +1,7 @@
 # Accepted reset lifecycle and parent collector contract
 
 This is a source interface, not permission to reset, reboot or clean a live host.
-The CLI does not collect catalogs, enumerate user sessions, issue a reboot, deploy
+The lifecycle commands do not collect catalogs, enumerate user sessions, issue a reboot, deploy
 packages or provision shared state. The parent Bolt integration supplies trusted,
 sanitized postboot evidence and retains its underlying artifacts. Source tests
 use fake commands and ordinary disposable directories, never user ZFS storage.
@@ -90,7 +90,8 @@ receipts and sanitized reports are `acceptance` (`recorded_at`, `boot_id`, exact
 validated `evidence`), `owned_candidates`, `cleanup_receipts`, and, when complete,
 `finalized_at`. Reports retain preparation fields and `success` meaning preparation
 completed, with separate `accepted` and `finalized` flags. `reboot_requested` stays
-false: no reboot-intent interface is implemented or needed to observe changed boot.
+false without a receipt; the optional [reboot request](reset-reboot.md) adds
+three-valued submission semantics and survives lifecycle transitions unchanged.
 This does not claim that an external actor never requested a reboot. Reports add
 `snapshot_policy: retain_origins_no_reclamation_claim`. Consumers must explicitly
 support report schema 2 rather than silently treating it as schema 1. Historical
