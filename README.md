@@ -174,7 +174,10 @@ Persisted preparation and historical reports are described in
 [reset transactions](docs/reset-transactions.md). Explicit supplied acceptance
 and `nest reset finalize ID --cleanup=owned --plan` are described in
 [accepted lifecycle and collector schema](docs/reset-lifecycle.md). These interfaces
-require preprovisioned shared state and do not themselves reboot or certify a host.
+require preprovisioned shared state and do not automatically reboot or certify a host.
+For the separately explicit `nest reset reboot ID --plan` and `--execute` primitive,
+read [durable reboot requests](docs/reset-reboot.md), including unknown outcomes,
+at-most-once refusals and the parent configuration-reader compatibility boundary.
 
 | Options                         | Description                                                          |
 |---------------------------------|----------------------------------------------------------------------|
@@ -191,6 +194,7 @@ require preprovisioned shared state and do not themselves reboot or certify a ho
 | `--dry-run`                     | Only print actions that would modify the system                      |
 | `-t`, `--test`                  | Test rsync with checksums instead of times                           |
 | `--plan`                       | Read-only plan and capacity observation; no reset mutation            |
+| `--execute`                    | Only with `reset reboot ID`: one durable native reboot request        |
 | `--format=human\|json`          | Human default or schema 1 JSON output                                |
 
 The steps are self explanatory and, unless specified with `--step`, `--begin`,

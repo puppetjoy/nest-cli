@@ -5,11 +5,13 @@ require 'digest'
 require_relative 'update_store'
 require_relative 'update_observation'
 require_relative 'update_lifecycle'
+require_relative 'update_reboot'
 
 module Nest
   # A native prepare transaction. Reboot, acceptance and cleanup are not implicit.
   class UpdateTransaction
     include UpdateLifecycle
+    include UpdateReboot
 
     PHASES = %w[backup mount sync kernel unmount activate].freeze
     attr_reader :record
@@ -112,9 +114,10 @@ module Nest
                  'policy' => record.fetch('policy').slice('filter_sha256', 'cli_sha256'),
                  'created_at' => record.fetch('created_at'),
                  'updated_at' => record.fetch('updated_at'), 'phases' => phases,
-                 'reboot_requested' => false, 'accepted' => record['schema'] == 2,
+                 'reboot_requested' => reboot_requested, 'accepted' => record['schema'] == 2,
                  'finalized' => record['state'] == 'finalized' }
       result['capacity'] = record['capacity'] if record['capacity']
+      result['reboot'] = record['reboot'].dup if record.key?('reboot')
       if record['schema'] == 2
         result.merge!(record.slice('acceptance', 'owned_candidates', 'cleanup_receipts', 'finalized_at'))
         result['snapshot_policy'] = 'retain_origins_no_reclamation_claim'
@@ -236,6 +239,7 @@ module Nest
         raise 'Missing post-backup target identity'
       end
 
+      validate_reboot!(data)
       data
     end
 
@@ -275,6 +279,7 @@ module Nest
     end
 
     def validate_resume!(release, root_generation, shared)
+      raise 'Reboot intent forbids preparation replay; inspect status' if record.key?('reboot')
       raise 'Accepted transactions cannot resume preparation' unless record['schema'] == 1
       raise 'Release mismatch' if release && release != record.fetch('release')
       raise 'Root generation mismatch' if root_generation && root_generation != record.fetch('source').fetch('path')
