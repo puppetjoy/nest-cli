@@ -49,10 +49,18 @@ module TransactionFixture
     end
 
     # Native accounting is independently exercised by CapacityAdmission fixtures.
-    def capacity(policy, _host, _source, stage: 'backup')
+    def capacity(policy, host, _source, stage: 'backup')
       raise 'Fixture accounting changed' if values['capacity_denied']
 
-      observations = { 'stage' => stage, 'accounting_contract' => Nest::CapacityAdmission::ACCOUNTING_CONTRACT }
+      parts = host.fetch('current').split('/')
+      names = (1...parts.size).map { |n| parts.take(n).join('/') }
+      names.select! { |name| host.fetch('target').start_with?("#{name}/") }
+      ancestors = names.each_with_index.to_h do |name, index|
+        [name, { 'guid' => (100 + index).to_s, 'quota' => 0, 'refquota' => 0,
+                 'used' => 100, 'referenced' => 100, 'available' => 10_000_000 }]
+      end
+      observations = { 'stage' => stage, 'accounting_contract' => Nest::CapacityAdmission::ACCOUNTING_CONTRACT,
+                       'shared_ancestors' => ancestors, 'datasets' => ancestors }
       { 'admission' => 'admitted', 'admitted' => true, 'observations' => observations,
         'observations_sha256' => Digest::SHA256.hexdigest(JSON.generate(observations)),
         'policy_sha256' => Nest::CapacityPolicy.digest(policy) }

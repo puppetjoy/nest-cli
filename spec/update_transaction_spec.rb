@@ -427,8 +427,8 @@ RSpec.describe Nest::UpdateTransaction do
   it 'binds the accounting contract in every check and refuses missing, mixed or future contracts' do
     worker('new', crash: 'sync')
     original = store.read('cycle')
-    expect(original['capacity']['accounting_contract']).to eq(2)
-    [nil, 1, 3, 2.0, true].each do |version|
+    expect(original['capacity']['accounting_contract']).to eq(3)
+    [nil, 1, 4, 3.0, true].each do |version|
       data = JSON.parse(JSON.generate(original))
       data['capacity']['accounting_contract'] = version
       store.write('cycle', data)
@@ -448,6 +448,102 @@ RSpec.describe Nest::UpdateTransaction do
     expect(observation).not_to receive(:capacity)
     expect(transaction.prepare('cycle', release: nil, root_generation: nil, resume: true)['success']).to be(true)
     expect(effects).to eq(described_class::PHASES)
+  end
+
+  def retain_contract_two
+    data = store.read('cycle')
+    data['capacity']['accounting_contract'] = 2
+    data['capacity']['checks'].each do |check|
+      check['observations']['accounting_contract'] = 2
+      check['observations'].delete('shared_ancestors')
+      check['observations_sha256'] = Digest::SHA256.hexdigest(JSON.generate(check['observations']))
+    end
+    store.write('cycle', data)
+    data
+  end
+
+  it 'exports/observes contract 2 unchanged but refuses interrupted-copy upgrade before effects' do
+    worker('new', crash: 'sync')
+    data = retain_contract_two
+    before = File.binread(File.join(store.path, 'cycle.json'))
+    expect(transaction.export('cycle')['capacity']).to eq(data['capacity'])
+    expect(transaction.status('cycle')['capacity']).to eq(data['capacity'])
+    expect(observation).not_to receive(:capacity)
+    expect do
+      transaction.prepare('cycle', release: nil, root_generation: nil, resume: true)
+    end.to raise_error(/stale capacity accounting contract.*never replay/)
+    expect(File.binread(File.join(store.path, 'cycle.json'))).to eq(before)
+    expect(effects).to eq(%w[backup mount sync])
+  end
+
+  [false, true].each do |requested|
+    it "preserves contract 2 historical reboot status/export (requested=#{requested}) without reboot eligibility" do
+      worker('new')
+      if requested
+        _out, err, status = reboot_worker('reboot', 'cycle', '--execute')
+        expect(status.success?).to be(true), err
+      end
+      data = retain_contract_two
+      before = File.binread(File.join(store.path, 'cycle.json'))
+      expect(transaction.export('cycle')['capacity']).to eq(data['capacity'])
+      expect(transaction.status('cycle')['capacity']).to eq(data['capacity'])
+      expect { transaction.reboot('cycle', plan: true) }.to raise_error(/Historical.*current capacity/)
+      expect { transaction.reboot('cycle') }.to raise_error(/Historical.*current capacity|already requested/)
+      expect(File.binread(File.join(store.path, 'cycle.json'))).to eq(before)
+      expect(reboot_effects.size).to eq(requested ? 1 : 0)
+      expect(effects).to eq(described_class::PHASES)
+    end
+  end
+
+  %w[new fresh].each do |boundary|
+    it "refuses an old contract returned by #{boundary} accounting before native mutation" do
+      calls = 0
+      allow(observation).to receive(:capacity).and_wrap_original do |method, *args, **options|
+        check = method.call(*args, **options)
+        calls += 1
+        if boundary == 'new' || calls > 1
+          check['observations']['accounting_contract'] = 2
+          check['observations_sha256'] = Digest::SHA256.hexdigest(JSON.generate(check['observations']))
+        end
+        check
+      end
+      updater = double('inert updater')
+      expect(updater).not_to receive(:update)
+      expect do
+        transaction.prepare('cycle', release: release, root_generation: '/fixture/release', updater: updater,
+                                     capacity_policy: TransactionFixture.capacity_policy(@directory))
+      end.to raise_error(/current capacity accounting|Fresh capacity accounting contract/)
+      expect(File.exist?(File.join(@directory, 'effects'))).to be(false)
+    end
+  end
+
+  %w[missing identity projection quota refquota available].each do |fault|
+    it "refuses corrupt contract 3 stored shared ancestry (#{fault}) even with a recomputed observation digest" do
+      worker('new', crash: 'sync')
+      data = store.read('cycle')
+      check = data['capacity']['checks'].last
+      ancestors = check['observations']['shared_ancestors']
+      case fault
+      when 'missing' then ancestors.delete('fixture/ROOT')
+      when 'identity'
+        ancestors['fixture/ROOT']['guid'] = '999'
+        check['observations']['datasets']['fixture/ROOT']['guid'] = '999'
+      when 'projection' then ancestors['fixture/ROOT']['used'] += 1
+      when 'available'
+        ancestors['fixture/ROOT']['available'] = 1
+        check['observations']['datasets']['fixture/ROOT']['available'] = 1
+      else
+        ancestors['fixture/ROOT'][fault] = 1
+        check['observations']['datasets']['fixture/ROOT'][fault] = 1
+      end
+      check['observations_sha256'] = Digest::SHA256.hexdigest(JSON.generate(check['observations']))
+      store.write('cycle', data)
+      expect { transaction.export('cycle') }.to raise_error(/shared ancestor|Shared ancestor/)
+      expect do
+        transaction.prepare('cycle', release: nil, root_generation: nil, resume: true)
+      end.to raise_error(/shared ancestor|Shared ancestor/)
+      expect(effects).to eq(%w[backup mount sync])
+    end
   end
 
   it 'reports readback/fsync failure and does not run a phase after the failed intent write' do

@@ -145,7 +145,7 @@ RSpec.describe Nest::CapacityAdmission do
       ordinary_layout(kind)
       result = admit
       observations = result.fetch('observations')
-      expect(observations['accounting_contract']).to eq(2)
+      expect(observations['accounting_contract']).to eq(3)
       expect(observations['datasets']['fixture/crypt/swap']).to include('type' => 'volume', 'volsize' => 4_096_000)
       expect(observations['datasets']['fixture/crypt/swap']).not_to have_key('available')
       affected = %w[fixture fixture/crypt fixture/crypt/ROOT fixture/crypt/generations]
@@ -191,7 +191,7 @@ RSpec.describe Nest::CapacityAdmission do
       it "refuses finite affected #{property} on #{name} despite unrelated-volume support" do
         ordinary_layout('owl')
         @datasets[name][property] = '1'
-        expect { admit }.to raise_error(/finite quota.*affected ancestor/)
+        expect { admit }.to raise_error(/finite quota.*affected ancestor|headroom/)
       end
     end
   end
@@ -287,7 +287,7 @@ RSpec.describe Nest::CapacityAdmission do
   end
 
   %w[quota refquota reservation refreservation].each do |property|
-    %w[fixture fixture/ROOT fixture/ROOT/A fixture/ROOT/B].each do |dataset|
+    %w[fixture/ROOT/A fixture/ROOT/B].each do |dataset|
       it "refuses #{property} on #{dataset}, including inherited ancestor limits" do
         @datasets[dataset][property] = '100000000'
         expect { admit }.to raise_error(/finite quota.*ancestor/)
@@ -378,6 +378,195 @@ RSpec.describe Nest::CapacityAdmission do
     @datasets['fixture/ROOT'] = @datasets['fixture'].dup
     @datasets['fixture/ROOT/A']['origin'] = 'fixture/foreign@old'
     expect { admit }.to raise_error(%r{origin/dependency})
+  end
+
+  %w[fixture fixture/ROOT].each do |name|
+    { 'quota' => 'used', 'refquota' => 'referenced' }.each do |limit, counter|
+      it "admits ample #{limit} on strict shared ancestor #{name} and independently denies exhausted headroom" do
+        demand = @policy['write_budget_bytes'] + @policy['promotion_budget_bytes']
+        @datasets[name][limit] = (demand + 100).to_s
+        result = admit
+        expect(result['observations']['shared_ancestors'][name]).to include(
+          'guid' => @guids[name], limit => demand + 100, counter => 100, 'available' => 10_000_000
+        )
+        @datasets[name][counter] = '101'
+        expect { admit }.to raise_error(/shared ancestor.*headroom/)
+        @datasets[name][counter] = (demand + 101).to_s
+        expect { admit }.to raise_error(/shared ancestor.*headroom/)
+        @datasets[name][counter] = '100'
+        @datasets[name]['available'] = (demand - 1).to_s
+        expect { admit }.to raise_error(/logical available/)
+      end
+    end
+
+    %w[reservation refreservation].each do |property|
+      it "refuses affected #{property} even on otherwise supported shared ancestor #{name}" do
+        @datasets[name]['quota'] = '100000000'
+        @datasets[name][property] = '1'
+        expect { admit }.to raise_error(/reservation.*affected ancestor/)
+      end
+    end
+  end
+
+  it 'uses quota used and refquota referenced, never logicalreferenced or descendant sums, and obeys both bounds' do
+    root = @datasets['fixture/ROOT']
+    root.merge!('quota' => '1001200', 'refquota' => '1001100', 'used' => '200',
+                'referenced' => '100', 'logicalreferenced' => '999999999')
+    expect(admit['admitted']).to be(true)
+    root['quota'] = '1001199'
+    expect { admit }.to raise_error(/quota headroom/)
+    root['quota'] = '1001200'
+    root['refquota'] = '1001099'
+    expect { admit }.to raise_error(/refquota headroom/)
+  end
+
+  it 'charges promotion demand to every shared ancestor even when the payload alone fits' do
+    @datasets['fixture']['quota'] = '1000100'
+    expect { admit }.to raise_error(/quota headroom/)
+    @datasets['fixture']['quota'] = '1001100'
+    @datasets['fixture/ROOT']['refquota'] = '1000100'
+    expect { admit }.to raise_error(/refquota headroom/)
+  end
+
+  %w[fixture/ROOT/A/child fixture/ROOT/B/child fixture/source].each do |name|
+    %w[quota refquota reservation refreservation].each do |property|
+      it "keeps unsupported #{property} on #{name} refused despite ample headroom" do
+        unless @datasets.key?(name)
+          add_filesystem(name)
+          binding = name.include?('/A/') ? 'current_tree' : 'alternate_tree'
+          @host[binding] << { 'dataset' => name, 'guid' => @guids.fetch(name) }
+        end
+        @datasets[name][property] = '100000000'
+        expect { admit }.to raise_error(/finite quota.*affected ancestor/)
+      end
+    end
+  end
+
+  %w[quota refquota].each do |property|
+    it "refuses ample #{property} on source-only ancestry without changing unrelated limit handling" do
+      ordinary_layout('owl')
+      @datasets['fixture/crypt/generations'][property] = '100000000'
+      expect { admit }.to raise_error(/finite quota.*affected ancestor/)
+      @datasets['fixture/crypt/generations'][property] = '0'
+      @datasets['fixture/crypt/ROOT'][property] = '100000000'
+      expect(admit['admitted']).to be(true)
+    end
+  end
+
+  %w[quota refquota used referenced available].each do |property|
+    it "refuses malformed, missing and duplicate shared ancestor #{property}" do
+      @datasets['fixture/ROOT'][property] = '-'
+      expect { admit }.to raise_error(/invalid native/)
+      @datasets['fixture/ROOT'].delete(property)
+      expect { admit }.to raise_error(/Incomplete dataset/)
+      @datasets['fixture/ROOT'][property] = '10000000'
+      publish
+      key = @responses.keys.find { |entry| JSON.parse(entry).last == 'fixture/ROOT' }
+      @responses[key] += "#{property}\t10000000\n"
+      File.write(ENV.fetch('NEST_CAPACITY_DATA'), JSON.generate(@responses))
+      expect do
+        described_class.new(Nest::UpdateObservation.new).call(@policy, @host, @source)
+      end.to raise_error(/Duplicate/)
+    end
+  end
+
+  # Actual capacity implementation and subprocess read fixtures, with ONLY an
+  # inert updater and ordinary-file identities standing in for native effects.
+  def prepare_with_native_capacity
+    @datasets['fixture']['quota'] = '10000000'
+    @datasets['fixture/ROOT']['refquota'] = '10000000'
+    @host.merge!('boot_id' => 'fixture-boot', 'next_boot' => @host['current'])
+    add_filesystem('fixture/unrelated', 'quota' => '100', 'available' => '1')
+    state = File.join(@directory, 'state')
+    Dir.mkdir(state, 0o700)
+    @store = Nest::UpdateStore.new(state, owner: Process.euid)
+    @effects = []
+    observation = double('bound fixture observation')
+    allow(observation).to receive(:host) { JSON.parse(JSON.generate(@host)) }
+    allow(observation).to receive(:source) { @source }
+    allow(observation).to receive(:policy).and_return('cli_sha256' => 'fixture', 'filter_sha256' => 'fixture')
+    allow(observation).to receive(:shared_state).and_return('dataset' => 'fixture/state', 'guid' => '900')
+    allow(observation).to receive(:target_unmounted!)
+    allow(observation).to receive(:copy_target!)
+    allow(observation).to receive(:tree) { @host['alternate_tree'] }
+    allow(observation).to receive(:capacity) do |policy, host, source, stage: 'backup'|
+      publish
+      described_class.new(Nest::UpdateObservation.new).call(policy, host, source, stage: stage)
+    end
+    updater = double('inert updater')
+    allow(updater).to receive(:update) do |phase, _stop, **_options|
+      expect(@store.read('cycle')['phases'].last).to include('phase' => phase.to_s, 'state' => 'started')
+      @effects << phase.to_s
+      if phase == :backup
+        @guids['fixture/ROOT/B'] = '501'
+        @host['alternate_tree'] = [{ 'dataset' => 'fixture/ROOT/B', 'guid' => '501' }]
+        @datasets['fixture/ROOT/A']['usedbysnapshots'] = '10'
+        @snapshots = "fixture/ROOT/A@beadm-clone-A-to-B\t10\tfixture/ROOT/B\n"
+        @datasets['fixture/ROOT/B']['origin'] = 'fixture/ROOT/A@beadm-clone-A-to-B'
+      end
+      @host['next_boot'] = @host['target'] if phase == :activate
+      true
+    end
+    allow(updater).to receive(:report).and_return(commands: [{ operation: :fixture, success: true, native_exit: 0 }])
+    yield @store if block_given?
+    path = File.join(@directory, 'bound-policy.json')
+    File.write(path, JSON.generate(@policy))
+    @transaction = Nest::UpdateTransaction.new(store: @store, observation: observation)
+    @transaction.prepare('cycle', release: @source['release'], root_generation: @source['path'],
+                                  capacity_policy: path, updater: updater)
+  end
+
+  def expect_only_native_reads
+    commands = File.readlines(ENV.fetch('NEST_CAPACITY_LOG')).map { |line| JSON.parse(line) }
+    expect(commands.map { |args| args.take(2) }.uniq).to contain_exactly(%w[zfs list], %w[zfs get], %w[zpool get])
+  end
+
+  it 'binds contract 3 through full prepare/activation with changing sibling bytes, never mutating native storage' do
+    report = prepare_with_native_capacity do |store|
+      allow(store).to receive(:write).and_wrap_original do |method, id, data|
+        method.call(id, data)
+        @datasets['fixture/unrelated']['used'] = '99'
+        @datasets['fixture/ROOT']['used'] = '101'
+      end
+    end
+    expect(report).to include('success' => true, 'state' => 'prepared')
+    expect(@effects).to eq(Nest::UpdateTransaction::PHASES)
+    expect(report['capacity']['accounting_contract']).to eq(3)
+    checks = report['capacity']['checks']
+    expect(checks.map { |check| check['observations']['stage'] }.uniq).to eq(%w[backup activation])
+    expect(checks.all? { |check| check['observations']['accounting_contract'] == 3 }).to be(true)
+    expect(@transaction.export('cycle')['capacity']).to eq(report['capacity'])
+    expect(@transaction.status('cycle')['capacity']).to eq(report['capacity'])
+    expect_only_native_reads
+  end
+
+  %w[backup activate].each do |phase|
+    %w[guid quota refquota used referenced available].each do |fault|
+      it "refuses fresh #{fault} changes after durable #{phase} intent before the inert mutator" do
+        expect do
+          prepare_with_native_capacity do |store|
+            allow(store).to receive(:write).and_wrap_original do |method, id, data|
+              method.call(id, data)
+              next unless data['phases'].last&.slice('phase', 'state') ==
+                          { 'phase' => phase, 'state' => 'started' }
+
+              case fault
+              when 'guid' then @guids['fixture/ROOT'] = '999'
+              when 'quota', 'refquota' then @datasets['fixture/ROOT'][fault] = '20000000'
+              when 'available' then @datasets['fixture/ROOT'][fault] = '1'
+              when 'used'
+                @datasets['fixture'][fault] = '9999999'
+              else @datasets['fixture/ROOT'][fault] = '9999999'
+              end
+            end
+          end
+        end.to raise_error(/Changed shared ancestor|headroom|logical available/)
+        expected = phase == 'backup' ? [] : %w[backup mount sync kernel unmount]
+        expect(@effects).to eq(expected)
+        expect(@store.read('cycle')['phases'].last).to include('phase' => phase, 'state' => 'started')
+        expect_only_native_reads
+      end
+    end
   end
 end
 

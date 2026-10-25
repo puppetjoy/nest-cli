@@ -10,7 +10,8 @@ module Nest
     PROPERTIES = (NUMERIC + %w[origin]).freeze
     VOLUME_PROPERTIES = %w[used usedbysnapshots referenced logicalreferenced reservation refreservation
                            volsize volblocksize origin].freeze
-    ACCOUNTING_CONTRACT = 2
+    ACCOUNTING_CONTRACT = 3
+    READABLE_CONTRACTS = [2, ACCOUNTING_CONTRACT].freeze
 
     def initialize(observation)
       @observation = observation
@@ -48,14 +49,8 @@ module Nest
       source_bytes = [source_bytes, number(size)].max
       raise 'Write budget is below immutable source lower bound' if policy.fetch('write_budget_bytes') < source_bytes
 
-      # No finite limit or reservation is treated as automatically transferable.
-      # Refuse rather than guess quota/refquota or inherited reservation algebra.
-      affected.each do |name|
-        props = datasets.fetch(name)
-        unless %w[quota refquota reservation refreservation].all? { |key| props.fetch(key).zero? }
-          raise "Unknown capacity: finite quota/refquota or reservation in affected ancestor layout: #{name}"
-        end
-      end
+      shared = shared_ancestors(host, datasets, affected)
+      validate_limits!(datasets, affected, shared, policy)
       validate_layout!(host, source, datasets, snapshots, stage)
       current = host.fetch('current')
       transfer = datasets.select { |name, _| name == current || name.start_with?("#{current}/") }
@@ -73,16 +68,48 @@ module Nest
 
       observations = { 'physical_pool' => physical, 'datasets' => datasets, 'snapshots' => snapshots,
                        'affected_datasets' => affected, 'accounting_contract' => ACCOUNTING_CONTRACT,
+                       'shared_ancestors' => shared,
                        'source_lower_bound_bytes' => source_bytes, 'promotion_bound_bytes' => transfer,
                        'required_physical_bytes' => required, 'stage' => stage }
       raise 'Unknown capacity: accounting exceeds bounded receipt size' if JSON.generate(observations).bytesize > 32_768
 
       { 'admission' => 'admitted', 'admitted' => true, 'policy_sha256' => CapacityPolicy.digest(policy),
         'observations' => observations, 'observations_sha256' => Digest::SHA256.hexdigest(JSON.generate(observations)),
-        'reason' => 'Unconstrained affected ancestry under configured budgets; native failures are authoritative.' }
+        'reason' => 'Supported affected ancestry under conservative budgets; native failures are authoritative.' }
     end
 
     private
+
+    # Include unlimited ancestors too: a newly added limit or replaced ancestor
+    # must not be silently rebound between preparation and a native boundary.
+    def shared_ancestors(host, datasets, affected)
+      names = affected.select do |name|
+        host.values_at('current', 'target').all? { |root| root.start_with?("#{name}/") }
+      end
+      names.to_h do |name|
+        [name, datasets.fetch(name).slice('guid', 'quota', 'refquota', 'used', 'referenced', 'available')]
+      end
+    end
+
+    def validate_limits!(datasets, affected, shared, policy)
+      demand = policy.fetch('write_budget_bytes') + policy.fetch('promotion_budget_bytes')
+      affected.each do |name|
+        props = datasets.fetch(name)
+        reserved = %w[reservation refreservation].any? { |key| props.fetch(key).positive? }
+        limited = %w[quota refquota].any? { |key| props.fetch(key).positive? }
+        if reserved || (limited && !shared.key?(name))
+          raise "Unknown capacity: finite quota/refquota or reservation in affected ancestor layout: #{name}"
+        end
+        next unless shared.key?(name)
+
+        { 'quota' => 'used', 'refquota' => 'referenced' }.each do |limit, counter|
+          next if props.fetch(limit).zero?
+          next if props.fetch(limit) - props.fetch(counter) >= demand
+
+          raise "Denied capacity: shared ancestor #{limit} headroom cannot cover budgets: #{name}"
+        end
+      end
+    end
 
     def read(*args)
       @observation.read(*args)
