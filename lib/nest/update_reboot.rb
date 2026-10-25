@@ -147,12 +147,8 @@ module Nest
     end
 
     def reboot_phases_complete?(data)
-      data.fetch('phases').size == UpdateTransaction::PHASES.size && data['phases'].all? do |row|
-        row['state'] == 'complete' && [nil, 0].include?(row['native_exit']) &&
-          row.fetch('commands').all? do |command|
-            command['success'] == true && [nil, 0].include?(command['native_exit'])
-          end
-      end
+      rows = data.fetch('phases')
+      rows.map { |row| row['phase'] } == UpdateTransaction::PHASES && rows.all? { |row| completed_phase_success?(row) }
     end
 
     # No shell, output capture, fallback or second launch. Bound child lifetime,

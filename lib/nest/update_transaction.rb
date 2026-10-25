@@ -285,8 +285,8 @@ module Nest
 
         Time.iso8601(row.fetch('finished_at'))
         raise 'Missing checked command outcomes' unless row['commands'].is_a?(Array)
-        if row['state'] == 'complete' && row['commands'].any? { |command| command['success'] != true }
-          raise 'Completed phase contains a failed command'
+        if row['state'] == 'complete' && !completed_phase_success?(row)
+          raise 'Completed phase contains a failed command or contradictory native exit'
         end
       end
       if rows.any? { |row| row['phase'] == 'backup' && row['state'] == 'complete' } && !data['target_tree'].is_a?(Array)
@@ -295,6 +295,21 @@ module Nest
 
       validate_reboot!(data)
       data
+    end
+
+    # Keep native outcomes intact. Only kernel Puppet has a successful nonzero
+    # detailed exit; nil retains the existing unknown-exit success semantics.
+    def completed_phase_success?(row)
+      row.is_a?(Hash) && row['state'] == 'complete' && successful_phase_exit?(row['native_exit']) &&
+        row['commands'].is_a?(Array) && row['commands'].all? do |command|
+          command.is_a?(Hash) && command['success'].equal?(true) && command['operation'].is_a?(String) &&
+            (successful_phase_exit?(command['native_exit']) ||
+             (row['phase'] == 'kernel' && command['operation'] == 'puppet' && command['native_exit'].eql?(2)))
+        end
+    end
+
+    def successful_phase_exit?(value)
+      value.nil? || value.eql?(0)
     end
 
     def create_record(id, release, root_generation, shared, capacity_policy)
