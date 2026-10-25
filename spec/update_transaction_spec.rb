@@ -7,6 +7,7 @@ require 'rbconfig'
 require 'pty'
 require 'nest/update_transaction'
 require 'nest/cli'
+require 'nest/updater/rsync'
 require_relative 'fixtures/transaction_worker'
 
 RSpec.describe Nest::UpdateTransaction do
@@ -555,6 +556,153 @@ RSpec.describe Nest::UpdateTransaction do
                                    capacity_policy: TransactionFixture.capacity_policy(@directory))
     end.to raise_error(Errno::EIO)
     expect(File.exist?(File.join(@directory, 'effects'))).to be(false)
+  end
+
+  def prepare_with_native_kernel(puppet_exit)
+    inert = TransactionFixture::Updater.new(@directory, store)
+    allow(Nest::Beadm).to receive(:new).and_return(double(current: 'A', failure_exit_status: nil))
+    allow(Nest::Installer).to receive(:for_host).and_return(double(image: '/fixture/release'))
+    native = Nest::Updater::Rsync.new(root_generation: '/fixture/release')
+    native.steps.each_key do |phase|
+      next if phase == :kernel
+
+      native.steps[phase] = -> { inert.update(phase, phase) }
+    end
+    runner = double('inert native runner')
+    allow(native).to receive(:cmd).and_return(runner)
+    allow(native).to receive(:forcecmd).and_return(runner)
+    allow(native).to receive(:logger).and_return(double.as_null_object)
+    allow(runner).to receive(:run!).and_return(double(exit_status: 0))
+    allow(native).to receive(:nspawn).with('/mnt/B', /puppet agent --test --tags kernel/, any_args)
+                                     .and_return(puppet_exit)
+    allow(Dir).to receive(:[]).and_call_original
+    allow(Dir).to receive(:[]).with('/fixture/release/lib/modules/*').and_return(['/fixture/release/lib/modules/test'])
+    allow(File).to receive(:exist?).and_call_original
+    allow(File).to receive(:exist?).with('/etc/default/kexec-load').and_return(false)
+    transaction.prepare('cycle', release: release, root_generation: '/fixture/release', updater: native,
+                                 capacity_policy: TransactionFixture.capacity_policy(@directory))
+  end
+
+  [0, 2].each do |native_exit|
+    it "preserves real kernel Puppet #{native_exit} through reopening, read-only eligibility and at-most-once intent" do
+      prepared = prepare_with_native_kernel(native_exit)
+      expect(prepared).to include('state' => 'prepared', 'success' => true)
+      kernel = prepared['phases'].find { |row| row['phase'] == 'kernel' }
+      expect(kernel['native_exit']).to be_nil
+      expect(kernel['commands']).to include('operation' => 'puppet', 'native_exit' => native_exit, 'success' => true)
+      before = File.binread(File.join(store.path, 'cycle.json'))
+      expect(transaction.export('cycle')['phases']).to eq(prepared['phases'])
+      expect(transaction.reboot('cycle', plan: true)['reboot_eligible']).to be(true)
+      expect(File.binread(File.join(store.path, 'cycle.json'))).to eq(before)
+      allow(transaction).to receive(:reboot_command).once.and_return(0)
+      expect(transaction.reboot('cycle')['reboot_requested']).to be(true)
+      expect { transaction.reboot('cycle') }.to raise_error(/already requested/)
+      expect { transaction.prepare('cycle', release: nil, root_generation: nil, resume: true) }
+        .to raise_error(/forbids preparation replay/)
+    end
+  end
+
+  [1, 4, 6, nil].each do |native_exit|
+    it "exports real failed kernel Puppet #{native_exit.inspect} unchanged without eligibility or replay" do
+      stopped = prepare_with_native_kernel(native_exit)
+      expect(stopped).to include('state' => 'stopped', 'success' => false)
+      expect(stopped['phases'].last).to include('state' => 'failed', 'native_exit' => native_exit)
+      before = File.binread(File.join(store.path, 'cycle.json'))
+      expect(transaction.export('cycle')['phases']).to eq(stopped['phases'])
+      expect { transaction.reboot('cycle', plan: true) }.to raise_error(/prepared state/)
+      expect { transaction.prepare('cycle', release: nil, root_generation: nil, resume: true) }
+        .to raise_error(/failed kernel.*never replay/)
+      expect(File.binread(File.join(store.path, 'cycle.json'))).to eq(before)
+    end
+  end
+
+  [nil, 0].each do |aggregate|
+    it "retains historical successful unknown command exits and aggregate #{aggregate.inspect}" do
+      worker('new')
+      data = store.read('cycle')
+      data['phases'].each do |row|
+        row['native_exit'] = aggregate
+        row['commands'].each { |command| command['native_exit'] = nil }
+      end
+      store.write('cycle', data)
+      expect(transaction.reboot('cycle', plan: true)['reboot_eligible']).to be(true)
+      expect(store.read('cycle')).to eq(data)
+    end
+  end
+
+  [2, 1, 4, 6, true, false, '0', 0.0].each do |exit_value|
+    it "rejects contradictory completed aggregate #{exit_value.inspect} on load and reboot" do
+      worker('new')
+      data = store.read('cycle')
+      data['phases'][3]['native_exit'] = exit_value
+      store.write('cycle', data)
+      expect { transaction.export('cycle') }.to raise_error(/Completed phase/)
+      expect { transaction.reboot('cycle', plan: true) }.to raise_error(/Completed phase/)
+      expect(store.read('cycle')).to eq(data)
+    end
+  end
+
+  [1, 4, 6, true, false, '2', 2.0, '0', 0.0].each do |exit_value|
+    it "rejects contradictory completed Puppet exit #{exit_value.inspect}" do
+      worker('new')
+      data = store.read('cycle')
+      data['phases'][3]['commands'] = [{ 'operation' => 'puppet', 'success' => true, 'native_exit' => exit_value }]
+      store.write('cycle', data)
+      expect { transaction.export('cycle') }.to raise_error(/Completed phase/)
+      expect { transaction.reboot('cycle', plan: true) }.to raise_error(/Completed phase/)
+      expect(store.read('cycle')).to eq(data)
+    end
+  end
+
+  Nest::UpdateTransaction::PHASES.each do |phase|
+    it "allows exit 2 only for kernel Puppet, not other operations in #{phase}" do
+      worker('new')
+      original = store.read('cycle')
+      %w[copy source modules kexec puppet].each do |operation|
+        next if phase == 'kernel' && operation == 'puppet'
+
+        data = JSON.parse(JSON.generate(original))
+        data['phases'].find { |row| row['phase'] == phase }['commands'] = [
+          { 'operation' => operation, 'success' => true, 'native_exit' => 2 }
+        ]
+        store.write('cycle', data)
+        expect { transaction.export('cycle') }.to raise_error(/Completed phase/)
+        expect { transaction.reboot('cycle', plan: true) }.to raise_error(/Completed phase/)
+        expect(store.read('cycle')).to eq(data)
+      end
+    end
+  end
+
+  [false, nil, 1, 'true'].each do |success|
+    it "rejects malformed completed command success #{success.inspect}" do
+      worker('new')
+      data = store.read('cycle')
+      data['phases'][3]['commands'][0]['success'] = success
+      store.write('cycle', data)
+      expect { transaction.export('cycle') }.to raise_error(/Completed phase/)
+    end
+  end
+
+  [nil, true, [], { 'success' => true, 'operation' => false, 'native_exit' => 0 }].each do |command|
+    it "refuses malformed completed command #{command.inspect} without changing the record" do
+      worker('new')
+      data = store.read('cycle')
+      data['phases'][3]['commands'] = [command]
+      store.write('cycle', data)
+      expect { transaction.export('cycle') }.to raise_error(/Completed phase/)
+      expect { transaction.reboot('cycle', plan: true) }.to raise_error(/Completed phase/)
+      expect(store.read('cycle')).to eq(data)
+    end
+  end
+
+  it 'refuses reordered phase provenance even when each command independently succeeds' do
+    worker('new')
+    data = store.read('cycle')
+    data['phases'][2], data['phases'][3] = data['phases'][3], data['phases'][2]
+    store.write('cycle', data)
+    expect { transaction.export('cycle') }.to raise_error(/Invalid phase receipts/)
+    expect { transaction.reboot('cycle', plan: true) }.to raise_error(/Invalid phase receipts/)
+    expect(store.read('cycle')).to eq(data)
   end
 
   def reboot_worker(*args, fault: nil, native_exit: '0')

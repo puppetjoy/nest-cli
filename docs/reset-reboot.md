@@ -45,6 +45,23 @@ without capacity admission or with older accounting remain exportable but cannot
 be upgraded by this command. The stored capacity policy and observation digests
 are validated; reboot does not repeat preparation or manufacture fresh admission.
 
+Completed-phase loading and reboot eligibility use the same native outcome
+contract. Aggregate phase exits remain `null` or integer `0`. Checked commands
+must have boolean `success: true` and a `null` or integer `0` native exit, except
+that operation `puppet` in phase `kernel` may retain integer `2` (Puppet's changed,
+successful detailed exit). No other operation or phase gains that exception;
+Puppet `1`, `4` and `6`, nonzero aggregate exits, booleans, strings and floats
+cannot describe completed successes. Existing successful unknown (`null`) exits
+retain their meaning; they are not converted into measured zero exits.
+
+This validation does not rewrite transaction records. Valid historical failed or
+stopped outcomes remain exportable with their original command/aggregate exits;
+they are not reboot-eligible and do not gain retry permission. Contradictory
+completed outcomes fail closed on loading, even without a reboot receipt.
+Installing this source changes the CLI policy digest, so existing preparations
+may correctly refuse eligibility on identity drift. Never edit or normalize the
+receipt to bypass that binding.
+
 Both eligibility and execution require the original machine, hostname, pool and
 shared-state GUID; original boot, current BE/tree and exact prepared target tree;
 expected target next-boot selection; unmounted target; immutable source generation;
