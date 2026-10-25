@@ -54,6 +54,7 @@ module Nest
 
     def reboot_plan(id)
       @record = load_record(id)
+      current_capacity_contract!
       observed = bound_host!
       if observed.fetch('boot_id') == record.fetch('host').fetch('boot_id')
         raise 'Reboot requires prepared state' unless record['state'] == 'prepared'
@@ -72,10 +73,14 @@ module Nest
       result.merge('read_only' => true, 'reboot_eligible' => reason == 'eligible', 'reboot_reason' => reason)
     end
 
-    def reboot_identity!
+    def current_capacity_contract!
       unless record['capacity'] && record['capacity']['accounting_contract'].eql?(CapacityAdmission::ACCOUNTING_CONTRACT)
         raise 'Historical preparation lacks current capacity admission; export and inspect, never replay'
       end
+    end
+
+    def reboot_identity!(historical: false)
+      current_capacity_contract! unless historical
 
       validate_capacity_policy!(nil)
       raise 'Reboot requires successful native preparation phases' unless reboot_phases_complete?(record)
@@ -112,7 +117,9 @@ module Nest
              receipt['boot_id'].is_a?(String) && receipt['boot_id'] == data.fetch('host').fetch('boot_id') &&
              %w[prepared accepted finalizing finalized].include?(data['state']) &&
              reboot_phases_complete?(data) &&
-             data['capacity'] && data['capacity']['accounting_contract'].eql?(CapacityAdmission::ACCOUNTING_CONTRACT)
+             data['capacity'] && CapacityAdmission::READABLE_CONTRACTS.any? do |version|
+               data['capacity']['accounting_contract'].eql?(version)
+             end
         raise 'Invalid reboot receipt or preparation provenance'
       end
 

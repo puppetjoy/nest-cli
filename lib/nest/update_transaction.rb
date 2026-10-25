@@ -72,7 +72,7 @@ module Nest
 
       if record.key?('reboot')
         if observed.fetch('boot_id') == baseline.fetch('boot_id')
-          reboot_identity!
+          reboot_identity!(historical: true)
         else
           accepted_host!
           reboot_source_policy!
@@ -157,7 +157,7 @@ module Nest
       raise 'Invalid stored capacity binding' unless capacity.is_a?(Hash) && capacity.keys.sort == fields.sort
 
       if capacity.key?('accounting_contract') &&
-         !capacity['accounting_contract'].eql?(CapacityAdmission::ACCOUNTING_CONTRACT)
+         CapacityAdmission::READABLE_CONTRACTS.none? { |version| capacity['accounting_contract'].eql?(version) }
         raise 'Unsupported stored capacity accounting contract'
       end
 
@@ -182,12 +182,57 @@ module Nest
 
         raise 'Invalid stored capacity observation digest or verdict'
       end
+      return unless capacity['accounting_contract'].eql?(CapacityAdmission::ACCOUNTING_CONTRACT)
+
+      baseline = ancestor_binding(checks.first, data.fetch('host'), capacity.fetch('policy'))
+      raise 'Stored shared ancestor identity or limits changed' unless checks.all? do |check|
+        ancestor_binding(check, data.fetch('host'), capacity.fetch('policy')) == baseline
+      end
+    end
+
+    def ancestor_binding(check, host, policy)
+      ancestors = check.fetch('observations').fetch('shared_ancestors')
+      raise 'Invalid shared ancestor accounting' unless ancestors.is_a?(Hash)
+
+      parts = host.fetch('current').split('/')
+      names = (1...parts.size).map { |n| parts.take(n).join('/') }
+      expected = names.select { |name| host.fetch('target').start_with?("#{name}/") }
+      raise 'Incomplete shared ancestor accounting' unless ancestors.keys.sort == expected.sort
+
+      ancestors.to_h do |name, props|
+        unless name.is_a?(String) && props.is_a?(Hash) &&
+               props.keys.sort == %w[available guid quota referenced refquota used] &&
+               props['guid'].is_a?(String) && props['guid'].match?(/\A[1-9][0-9]*\z/) &&
+               %w[quota refquota used referenced available].all? { |key| props[key].is_a?(Integer) && props[key] >= 0 }
+          raise 'Invalid shared ancestor accounting'
+        end
+
+        dataset = check.fetch('observations').fetch('datasets').fetch(name)
+        raise 'Shared ancestor accounting disagrees with dataset observation' unless dataset.slice(*props.keys) == props
+
+        demand = policy.fetch('write_budget_bytes') + policy.fetch('promotion_budget_bytes')
+        if props.fetch('available') < demand ||
+           { 'quota' => 'used', 'refquota' => 'referenced' }.any? do |limit, counter|
+             props.fetch(limit).positive? && props.fetch(limit) - props.fetch(counter) < demand
+           end
+          raise 'Invalid admitted shared ancestor headroom'
+        end
+
+        [name, props.slice('guid', 'quota', 'refquota')]
+      end
     end
 
     def check_capacity!(stage)
       capacity = record.fetch('capacity')
       check = @observation.capacity(capacity.fetch('policy'), @observation.host, record.fetch('source'), stage: stage)
       raise 'Capacity accounting did not admit preparation' unless check['admitted'] == true
+      unless check.fetch('observations')['accounting_contract'].eql?(CapacityAdmission::ACCOUNTING_CONTRACT)
+        raise 'Fresh capacity accounting contract mismatch'
+      end
+      unless ancestor_binding(check, record.fetch('host'), capacity.fetch('policy')) ==
+             ancestor_binding(capacity.fetch('checks').first, record.fetch('host'), capacity.fetch('policy'))
+        raise 'Changed shared ancestor GUID or limits; export and inspect, never rebind'
+      end
 
       check['checked_at'] = now
       capacity['checks'] = (capacity.fetch('checks') + [check]).last(16)
@@ -279,6 +324,12 @@ module Nest
 
       capacity = CapacityPolicy.read(capacity_policy)
       admission = @observation.capacity(capacity, host, source)
+      unless admission['admitted'] == true &&
+             admission.fetch('observations')['accounting_contract'].eql?(CapacityAdmission::ACCOUNTING_CONTRACT)
+        raise 'New preparation requires current capacity accounting admission'
+      end
+
+      ancestor_binding(admission, host, capacity)
       { 'schema' => 1, 'kind' => 'reset_transaction', 'id' => id, 'state' => 'pending',
         'release' => release, 'source' => source, 'host' => host, 'shared_state' => shared,
         'capacity' => { 'accounting_contract' => CapacityAdmission::ACCOUNTING_CONTRACT,

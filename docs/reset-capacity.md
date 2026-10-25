@@ -75,11 +75,20 @@ sibling finite PVC limits/reservations are observed, not treated as affected
 filesystem limits. Their allocations and reservations are never credited back.
 Native affected `available` and whole-pool physical free remain independent gates.
 
-All affected filesystems, including inherited ancestors and source, must have
-unlimited quota/refquota and zero reservation/refreservation. Even a generous
-finite affected limit refuses precisely as unknown: this version does not claim
-a complete finite-limit/promotion algebra. It never converts quota to refquota,
-relaxes reservations or uses deletion of the old alternate as headroom.
+Contract 3 supports finite quota/refquota only on strict shared ancestors of
+BOTH bound current and target BE roots, including pool and ROOT ancestry. For
+each such ancestor, `quota - used` (when quota is nonzero) and
+`refquota - referenced` (when refquota is nonzero) must independently cover the
+ENTIRE write plus promotion budgets. Negative headroom refuses. Quota uses native
+used including descendants/snapshots; refquota uses native referenced, never
+logicalreferenced or a sum of descendants. Zero means unlimited. This deliberately
+overestimates demand even where promotion might not increase shared usage.
+
+Every affected reservation/refreservation remains unknown/refused. Finite limits
+on current/target roots or descendants, the immutable source or source-only
+ancestors remain unknown/refused, even with ample headroom. Clone-root properties
+and broader promotion algebra are not modeled. No quota is copied, changed or
+cleared, no reservation is relaxed, and rollback deletion is never headroom.
 
 Current BE datasets must have no origin dependency. Before backup the exact
 recursive snapshot name must be absent. The preexisting bound alternate may
@@ -97,8 +106,8 @@ there is no cleanup-to-fit path, origin deletion or new destruction behavior.
 
 The conservative promotion accounting bound is the sum of current-tree `used`
 values, which already includes snapshot/descendant usage and deliberately may
-double-count descendants. Promotion budget must cover that bound. With all
-finite affected logical limits/reservations refused, every affected filesystem's
+double-count descendants. Promotion budget must cover that bound. In addition
+to supported shared-ancestor finite-limit checks, every affected filesystem's
 `available` must still cover the sum of write plus promotion budgets. Logical
 available is a separate native observation that incorporates native pool/slop
 and logical availability rules; it is not replaced by physical free.
@@ -136,34 +145,48 @@ and `org.nest:expectations` do not substitute for `org.nest:release` here.
 
 ## Durable gate and historical records
 
-New schema-1 preparation adds `capacity` with `accounting_contract: 2`, canonical `policy`, `policy_sha256`
+New schema-1 preparation adds `capacity` with `accounting_contract: 3`, canonical `policy`, `policy_sha256`
 and a bounded `checks` array (latest 16 observations). Each check carries verdict,
 policy digest, safe observations, observations digest and, for fresh rechecks,
 UTC `checked_at`. The existing atomic fsync/rename/readback and flock protect
 these alongside the original release/host/source/policy bindings.
-Every new observation includes the same `accounting_contract: 2` and the sorted
+Every new observation includes the same `accounting_contract: 3` and the sorted
 `affected_datasets` closure, covered by its observation digest. Mixed/unknown
 contracts refuse. The transaction and policy schema numbers remain unchanged.
+The new `shared_ancestors` map retains exact GUID, quota, refquota, used,
+referenced and available for EVERY strict shared ancestor, even unlimited ones.
+Stored validation checks the exact shared closure, property types, agreement with
+the full dataset observations, admitted headroom and consistent GUID/limits across
+checks. It does not demand identical byte counters between checks.
 
 Recheck occurs on entry to unfinished preparation (including safe copy-only
 resume), before copy, and before backup and activation. Backup/activation are
 checked again after their durable started receipt, immediately before native
 effects. A failed late read leaves that phase ambiguous, never permission to
 replay. No completed phase is replayed to get accounting evidence. Changed
-accounting may continue only if it still admits the original budgets; changed
-policy cannot replace a bound unresolved transaction. Resume normally needs
+accounting may continue only if it still admits the original budgets. Every
+boundary reacquires the full native accounting; shared-ancestor names, GUIDs,
+quota and refquota must still equal the bound checks. Even an increased/cleared
+limit or newly finite formerly unlimited limit refuses rather than silently
+rebinding. Used/referenced/available and unrelated sibling counters may change,
+provided all fresh capacity gates still pass. Changed policy cannot replace a
+bound unresolved transaction. Resume normally needs
 no policy path because canonical policy lives in the receipt; an optional path
 must canonicalize to exactly that policy. Native failures and safe-copy-only
 resume rules remain unchanged.
 
-Historical preparation without this gate or with unversioned r2 accounting
-remains readable/exportable, retaining its exact old evidence. It cannot
+Historical preparation without this gate, with unversioned r2 accounting, or
+with valid accounting contract 2 remains readable/exportable, retaining its
+exact old evidence (including old reboot receipts). It cannot
 resume mutation or be retrofitted with a policy: export the report and inspect
 native state for manual recovery, never replay. Historical accepted/finalized
 lifecycle and reports retain their previous semantics and do not require a
 source publisher or new accounting. Prepared historical evidence may still
 enter the existing postboot acceptance lifecycle, never preparation replay.
-No old check is relabeled as contract 2. Reports never export raw machine-id.
+Contract 2 preparation cannot resume or become reboot-eligible under contract 3,
+including a completed preparation: compatibility refuses before native mutation.
+Historical reboot status remains observation, not renewed execution eligibility.
+No old check is relabeled as contract 3. Reports never export raw machine-id.
 
 All tests use fake native inventories, disposable ordinary directories, and
 real process/flock/crash fixtures. They do not establish live promotion, A/B
