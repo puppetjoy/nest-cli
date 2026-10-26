@@ -37,6 +37,10 @@ module Nest
       read('zfs', 'get', '-Hp', '-o', 'value', name, dataset)
     end
 
+    def pool_property(pool, name)
+      read('zpool', 'get', '-Hp', '-o', 'value', name, pool)
+    end
+
     def guid(dataset)
       value = property(dataset, 'guid')
       raise 'Invalid ZFS GUID' unless value.match?(/\A[1-9][0-9]*\z/)
@@ -55,7 +59,7 @@ module Nest
                                                                        row.fetch('options').split(',').include?('rw')
 
       pool = dataset.split('/').first
-      raise 'State pool must be host-local' unless property(pool, 'org.nest:host-id') == machine_id
+      raise 'State pool must be host-local' unless pool_property(pool, 'org.nest:host-id') == machine_id
 
       { 'dataset' => dataset, 'guid' => guid(dataset), 'pool_guid' => pool_guid(pool) }
     end
@@ -75,7 +79,7 @@ module Nest
     end
 
     def pool_guid(pool)
-      value = read('zpool', 'get', '-Hp', '-o', 'value', 'guid', pool)
+      value = pool_property(pool, 'guid')
       raise 'Invalid pool GUID' unless value.match?(/\A[1-9][0-9]*\z/)
 
       value
@@ -100,7 +104,7 @@ module Nest
         'alternate_tree' => tree(be_root).select do |row|
           row['dataset'] == target || row['dataset'].start_with?("#{target}/")
         end,
-        'target' => target, 'next_boot' => read('zpool', 'get', '-Hp', '-o', 'value', 'bootfs', pool) }
+        'target' => target, 'next_boot' => pool_property(pool, 'bootfs') }
     end
 
     def tree(dataset)
@@ -128,7 +132,7 @@ module Nest
       inventory = mounts
       row = exact_mount(path, inventory)
       dataset = row.fetch('source')
-      unless property(dataset.split('/').first, 'org.nest:host-id') == machine_id &&
+      unless pool_property(dataset.split('/').first, 'org.nest:host-id') == machine_id &&
              property(dataset, 'org.nest:host') == Socket.gethostname
         raise 'Root generation must be host-local and bound to this hostname'
       end
