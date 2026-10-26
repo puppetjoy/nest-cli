@@ -193,7 +193,9 @@ RSpec.describe Nest::UpdateTransaction, 'postboot lifecycle' do
     expect(preview).to include('read_only' => true, 'candidates' => [])
     expect(File.exist?(File.join(store.path, '.lock'))).to be(false)
     expect(File.binread(File.join(store.path, 'cycle.json'))).to eq(before)
-    expect(transaction.finalize('cycle', cleanup: 'owned')).to include('state' => 'finalized', 'finalized' => true)
+    expect(transaction.finalize('cycle', cleanup: 'owned')).to include(
+      'state' => 'finalized', 'finalized' => true, 'clone_snapshot' => 'nest-reset-cycle'
+    )
     finalized = File.binread(File.join(store.path, 'cycle.json'))
     expect(transaction.finalize('cycle', cleanup: 'owned')).to include('finalized' => true)
     expect(File.binread(File.join(store.path, 'cycle.json'))).to eq(finalized)
@@ -223,6 +225,8 @@ RSpec.describe Nest::UpdateTransaction, 'postboot lifecycle' do
                                     capacity_policy: TransactionFixture.capacity_policy(@directory))
     end.to raise_error(/fixture stops/)
     expect(store.read('second')['host']['current']).to eq('fixture/ROOT/B')
+    expect(store.read('second')['clone_snapshot']).to eq('nest-reset-second')
+    expect(store.read('cycle')['clone_snapshot']).to eq('nest-reset-cycle')
   end
 
   {
