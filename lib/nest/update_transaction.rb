@@ -21,7 +21,8 @@ module Nest
       @observation = observation
     end
 
-    def plan(release:, root_generation:, capacity_policy: nil)
+    def plan(release:, root_generation:, capacity_policy: nil, id: "plan-#{SecureRandom.hex(16)}")
+      @store.id!(id)
       @store.validate!
       raise 'Release must be an immutable sha256 digest' unless release&.match?(/\Asha256:[0-9a-f]{64}\z/)
       raise 'Root generation is required' unless root_generation.is_a?(String)
@@ -29,11 +30,13 @@ module Nest
       host = @observation.host
       source = @observation.source(root_generation, release)
       capacity = if capacity_policy
-                   @observation.capacity(CapacityPolicy.read(capacity_policy), host, source)
+                   @observation.capacity(CapacityPolicy.read(capacity_policy), host, source,
+                                         snapshot: "nest-reset-#{id}")
                  else
                    { 'admission' => 'unknown', 'admitted' => nil, 'reason' => 'No capacity policy supplied' }
                  end
-      { 'shared_state' => @observation.shared_state(@store.path),
+      { 'id' => id, 'clone_snapshot' => "nest-reset-#{id}",
+        'shared_state' => @observation.shared_state(@store.path),
         'host' => host.reject { |key, _| key == 'machine_id' },
         'source' => source, 'policy' => @observation.policy,
         'read_only' => true, 'capacity_admission' => capacity.fetch('admission'), 'capacity' => capacity }
@@ -125,6 +128,7 @@ module Nest
                  'updated_at' => record.fetch('updated_at'), 'phases' => phases,
                  'reboot_requested' => reboot_requested, 'accepted' => record['schema'] == 2,
                  'finalized' => record['state'] == 'finalized' }
+      result['clone_snapshot'] = record['clone_snapshot'] if record.key?('clone_snapshot')
       result['capacity'] = record['capacity'] if record['capacity']
       result['reboot'] = record['reboot'].dup if record.key?('reboot')
       if record['schema'] == 2
@@ -168,6 +172,10 @@ module Nest
       raise 'Invalid stored capacity checks' unless checks.is_a?(Array) && checks.size.between?(1, 16)
 
       checks.each do |check|
+        if check.is_a?(Hash) && check['observations'].is_a?(Hash) &&
+           check['observations']['clone_snapshot'] != data['clone_snapshot']
+          raise 'Stored capacity snapshot identity mismatch'
+        end
         if capacity.key?('accounting_contract') &&
            (!check.is_a?(Hash) || !check['observations'].is_a?(Hash) ||
             !check['observations']['accounting_contract'].eql?(capacity['accounting_contract']))
@@ -224,7 +232,11 @@ module Nest
 
     def check_capacity!(stage)
       capacity = record.fetch('capacity')
-      check = @observation.capacity(capacity.fetch('policy'), @observation.host, record.fetch('source'), stage: stage)
+      check = @observation.capacity(capacity.fetch('policy'), @observation.host, record.fetch('source'),
+                                    stage: stage, snapshot: record['clone_snapshot'])
+      if record.key?('clone_snapshot') && check.fetch('observations')['clone_snapshot'] != record['clone_snapshot']
+        raise 'Capacity snapshot identity mismatch'
+      end
       raise 'Capacity accounting did not admit preparation' unless check['admitted'] == true
       unless check.fetch('observations')['accounting_contract'].eql?(CapacityAdmission::ACCOUNTING_CONTRACT)
         raise 'Fresh capacity accounting contract mismatch'
@@ -257,6 +269,10 @@ module Nest
       unless [1, 2].include?(data['schema']) && data['kind'] == 'reset_transaction' &&
              data['id'] == id && states.include?(data['state'])
         raise 'Invalid transaction record'
+      end
+
+      if data.key?('clone_snapshot') && data['clone_snapshot'] != "nest-reset-#{@store.id!(id)}"
+        raise 'Invalid transaction snapshot binding'
       end
 
       validate_lifecycle!(data)
@@ -338,7 +354,10 @@ module Nest
       raise 'New preparation requires --capacity-policy FILE' unless capacity_policy
 
       capacity = CapacityPolicy.read(capacity_policy)
-      admission = @observation.capacity(capacity, host, source)
+      snapshot = "nest-reset-#{id}"
+      admission = @observation.capacity(capacity, host, source, snapshot: snapshot)
+      raise 'Capacity snapshot identity mismatch' unless admission.fetch('observations')['clone_snapshot'] == snapshot
+
       unless admission['admitted'] == true &&
              admission.fetch('observations')['accounting_contract'].eql?(CapacityAdmission::ACCOUNTING_CONTRACT)
         raise 'New preparation requires current capacity accounting admission'
@@ -347,6 +366,7 @@ module Nest
       ancestor_binding(admission, host, capacity)
       { 'schema' => 1, 'kind' => 'reset_transaction', 'id' => id, 'state' => 'pending',
         'release' => release, 'source' => source, 'host' => host, 'shared_state' => shared,
+        'clone_snapshot' => snapshot,
         'capacity' => { 'accounting_contract' => CapacityAdmission::ACCOUNTING_CONTRACT,
                         'policy' => capacity, 'policy_sha256' => CapacityPolicy.digest(capacity),
                         'checks' => [admission] },
@@ -359,6 +379,7 @@ module Nest
       raise 'Release mismatch' if release && release != record.fetch('release')
       raise 'Root generation mismatch' if root_generation && root_generation != record.fetch('source').fetch('path')
       raise 'Shared state identity mismatch' unless shared == record.fetch('shared_state')
+
       unless record['capacity']
         raise 'Historical preparation lacks capacity admission; export report and inspect native state ' \
               'for manual recovery, never replay'
@@ -424,7 +445,8 @@ module Nest
         save
       end
       success = updater.update(phase.to_sym, phase.to_sym,
-                               root_generation: record.fetch('source').fetch('path'), format: 'json')
+                               root_generation: record.fetch('source').fetch('path'), format: 'json',
+                               clone_snapshot: record['clone_snapshot'])
       result = updater.report
       receipt['commands'] = result.fetch(:commands).map do |command|
         { 'operation' => command.fetch(:operation).to_s, 'native_exit' => command[:native_exit],

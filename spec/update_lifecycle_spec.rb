@@ -63,6 +63,7 @@ RSpec.describe Nest::UpdateTransaction, 'postboot lifecycle' do
   it 'retains acceptance, finalization and report compatibility for historical records without capacity' do
     data = store.read('cycle')
     data.delete('capacity')
+    data.delete('clone_snapshot')
     store.write('cycle', data)
     expect(transaction.export('cycle')['state']).to eq('prepared')
     expect(accept['accepted']).to be(true)
@@ -72,9 +73,11 @@ RSpec.describe Nest::UpdateTransaction, 'postboot lifecycle' do
 
   it 'retains old r2 accounting through acceptance and finalization without retrofitting its contract' do
     data = store.read('cycle')
+    data.delete('clone_snapshot')
     data['capacity'].delete('accounting_contract')
     data['capacity']['checks'].each do |check|
       check['observations'].delete('accounting_contract')
+      check['observations'].delete('clone_snapshot')
       check['observations_sha256'] = Digest::SHA256.hexdigest(JSON.generate(check['observations']))
     end
     store.write('cycle', data)
@@ -182,6 +185,7 @@ RSpec.describe Nest::UpdateTransaction, 'postboot lifecycle' do
   end
 
   it 'accepts bound named gates then finalizes ordinary A/B without extra deletion or plan writes' do
+    expect(store.read('cycle')['clone_snapshot']).to eq('nest-reset-cycle')
     expect(accept).to include('schema' => 2, 'accepted' => true, 'finalized' => false)
     before = File.binread(File.join(store.path, 'cycle.json'))
     File.unlink(File.join(store.path, '.lock'))

@@ -17,7 +17,11 @@ module Nest
       @observation = observation
     end
 
-    def call(policy, host, source, stage: 'backup')
+    def call(policy, host, source, stage: 'backup', snapshot: nil)
+      if snapshot && !snapshot.match?(/\Anest-reset-[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}\z/)
+        raise 'Invalid transaction snapshot name'
+      end
+
       policy = CapacityPolicy.validate(policy)
       bindings = { 'release' => source.fetch('release'), 'hostname' => host.fetch('hostname'),
                    'host_identity_sha256' => Digest::SHA256.hexdigest(host.fetch('machine_id')),
@@ -51,7 +55,7 @@ module Nest
 
       shared = shared_ancestors(host, datasets, affected)
       validate_limits!(datasets, affected, shared, policy)
-      validate_layout!(host, source, datasets, snapshots, stage)
+      validate_layout!(host, source, datasets, snapshots, stage, snapshot)
       current = host.fetch('current')
       transfer = datasets.select { |name, _| name == current || name.start_with?("#{current}/") }
                          .values.sum { |props| props.fetch('used') }
@@ -71,6 +75,7 @@ module Nest
                        'shared_ancestors' => shared,
                        'source_lower_bound_bytes' => source_bytes, 'promotion_bound_bytes' => transfer,
                        'required_physical_bytes' => required, 'stage' => stage }
+      observations['clone_snapshot'] = snapshot if snapshot
       raise 'Unknown capacity: accounting exceeds bounded receipt size' if JSON.generate(observations).bytesize > 32_768
 
       { 'admission' => 'admitted', 'admitted' => true, 'policy_sha256' => CapacityPolicy.digest(policy),
@@ -246,14 +251,14 @@ module Nest
       affected
     end
 
-    def validate_layout!(host, source, datasets, snapshots, stage)
+    def validate_layout!(host, source, datasets, snapshots, stage, snapshot)
       current = host.fetch('current')
       target = host.fetch('target')
       expected = host.fetch('current_tree').map { |row| row.fetch('dataset') }.sort
       actual = datasets.keys.select { |name| name == current || name.start_with?("#{current}/") }.sort
       raise 'Incomplete current-tree capacity inventory' unless expected == actual
 
-      suffix = "beadm-clone-#{current.split('/').last}-to-#{target.split('/').last}"
+      suffix = snapshot || "beadm-clone-#{current.split('/').last}-to-#{target.split('/').last}"
       if stage != 'backup'
         expected_targets = expected.map { |name| name.sub(current, target) }
         targets = datasets.keys.select { |name| name == target || name.start_with?("#{target}/") }.sort
