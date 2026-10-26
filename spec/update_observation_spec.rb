@@ -33,13 +33,14 @@ RSpec.describe Nest::UpdateObservation do
                      mount('fixture/releases/one', @source, 'ro'),
                      mount('fixture/ROOT/B', '/mnt/B'), mount('fixture/ROOT/B/var', '/mnt/B/var')],
         'properties' => {
-          'fixture' => { 'org.nest:host-id' => 'f' * 32 },
+          'fixture' => { 'org.nest:host-id' => '-' },
           'fixture/updates' => { 'mountpoint' => @state, 'readonly' => 'off', 'guid' => '401' },
           'fixture/releases/one' => { 'readonly' => 'on', 'org.nest:release' => release,
                                       'org.nest:host' => Socket.gethostname, 'mountpoint' => @source,
                                       'guid' => '301', 'createtxg' => '18' }
         },
-        'pools' => { 'fixture' => { 'guid' => '101', 'bootfs' => 'fixture/ROOT/A' } },
+        'pools' => { 'fixture' => { 'guid' => '101', 'bootfs' => 'fixture/ROOT/A',
+                                    'org.nest:host-id' => 'f' * 32 } },
         'trees' => {
           'fixture/ROOT/A' => [['fixture/ROOT/A', '11', '/']],
           'fixture/ROOT' => [['fixture/ROOT', '10', 'none'], ['fixture/ROOT/A', '11', '/'],
@@ -90,6 +91,25 @@ RSpec.describe Nest::UpdateObservation do
     )
   end
 
+  ['-', 'e' * 32].each do |identity|
+    it "admits a matching pool independently of root dataset identity #{identity}" do
+      @data['properties']['fixture']['org.nest:host-id'] = identity
+      publish
+      expect(observer.source(@source, release)).to include('guid' => '301')
+      expect(observer.shared_state(@state)).to include('guid' => '401')
+      reads = File.readlines(File.join(@directory, 'reads')).map { |line| JSON.parse(line) }
+      expect(reads).to include(['zpool', 'get', '-Hp', '-o', 'value', 'org.nest:host-id', 'fixture'])
+      expect(reads).not_to include(['zfs', 'get', '-Hp', '-o', 'value', 'org.nest:host-id', 'fixture'])
+    end
+    it "refuses pool identity #{identity} even when the root dataset identity matches" do
+      @data['properties']['fixture']['org.nest:host-id'] = 'f' * 32
+      @data['pools']['fixture']['org.nest:host-id'] = identity
+      publish
+      expect { observer.source(@source, release) }.to raise_error(/host-local/)
+      expect { observer.shared_state(@state) }.to raise_error(/host-local/)
+    end
+  end
+
   it 'refuses a per-BE or network filesystem before provisioning anything' do
     @data['mounts'].find { |row| row['target'] == @state }['source'] = 'fixture/ROOT/A/var/updates'
     publish
@@ -109,7 +129,7 @@ RSpec.describe Nest::UpdateObservation do
     publish
     expect { observer.shared_state(@state) }.to raise_error(/dedicated/)
     @data['properties']['fixture/updates']['mountpoint'] = @state
-    @data['properties']['fixture']['org.nest:host-id'] = 'other'
+    @data['pools']['fixture']['org.nest:host-id'] = 'other'
     publish
     expect { observer.shared_state(@state) }.to raise_error(/host-local/)
     @data['mounts'].delete(row)
@@ -133,10 +153,10 @@ RSpec.describe Nest::UpdateObservation do
     publish
     expect { observer.source(@source, release) }.to raise_error(/host-local/)
     props['org.nest:host'] = Socket.gethostname
-    @data['properties']['fixture']['org.nest:host-id'] = 'e' * 32
+    @data['pools']['fixture']['org.nest:host-id'] = 'e' * 32
     publish
     expect { observer.source(@source, release) }.to raise_error(/host-local/)
-    @data['properties']['fixture']['org.nest:host-id'] = 'f' * 32
+    @data['pools']['fixture']['org.nest:host-id'] = 'f' * 32
     props['mountpoint'] = '/other'
     publish
     expect { observer.source(@source, release) }.to raise_error(/immutable/)
