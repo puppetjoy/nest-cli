@@ -97,6 +97,30 @@ RSpec.describe Nest::Beadm do
     expect(commands.grep(/destroy|unmount|umount|quota=/)).to be_empty
   end
 
+  it 'uses the bound transaction suffix for every recursive clone and retains a partial failure' do
+    allow(beadm).to receive(:list).and_return(['A'])
+    allow(beadm).to receive(:read_command)
+      .with('zfs', 'list', '-H', '-o', 'name,compression,mountpoint', '-r', current_fs)
+      .and_return("#{current_fs}\tlz4\t/\n#{current_fs}/var\tlz4\t/var\n")
+    failures << %r{^zfs clone .* #{root}/B/var$}
+    expect { beadm.create('B', snapshot: 'nest-reset-cycle') }.to raise_error(/Failed to clone/)
+    expect(commands.first).to eq("zfs snapshot -r #{current_fs}@nest-reset-cycle")
+    expect(commands.grep(/^zfs clone /).size).to eq(2)
+    expect(commands.grep(/^zfs clone /).all? { |command| command.include?('@nest-reset-cycle ') }).to be(true)
+    expect(commands.grep(/destroy|rename|beadm-clone/)).to be_empty
+  end
+
+  it 'preserves standalone creation naming and failure cleanup' do
+    allow(beadm).to receive(:list).and_return(['A'])
+    allow(beadm).to receive(:read_command)
+      .with('zfs', 'list', '-H', '-o', 'name,compression,mountpoint', '-r', current_fs)
+      .and_return("#{current_fs}\tlz4\t/\n")
+    failures << /^zfs clone /
+    expect { beadm.create('B') }.to raise_error(/Failed to clone/)
+    expect(commands).to include("zfs snapshot -r #{current_fs}@beadm-clone-A-to-B",
+                                "zfs destroy -R #{current_fs}@beadm-clone-A-to-B")
+  end
+
   it 'disables all inactive roots and descendants before a quota-limited promotion fails' do
     # Payload fits, but transferred snapshots push accounting above the quota.
     quotas[current_fs] = 100

@@ -63,6 +63,7 @@ RSpec.describe Nest::UpdateTransaction, 'postboot lifecycle' do
   it 'retains acceptance, finalization and report compatibility for historical records without capacity' do
     data = store.read('cycle')
     data.delete('capacity')
+    data.delete('clone_snapshot')
     store.write('cycle', data)
     expect(transaction.export('cycle')['state']).to eq('prepared')
     expect(accept['accepted']).to be(true)
@@ -72,9 +73,11 @@ RSpec.describe Nest::UpdateTransaction, 'postboot lifecycle' do
 
   it 'retains old r2 accounting through acceptance and finalization without retrofitting its contract' do
     data = store.read('cycle')
+    data.delete('clone_snapshot')
     data['capacity'].delete('accounting_contract')
     data['capacity']['checks'].each do |check|
       check['observations'].delete('accounting_contract')
+      check['observations'].delete('clone_snapshot')
       check['observations_sha256'] = Digest::SHA256.hexdigest(JSON.generate(check['observations']))
     end
     store.write('cycle', data)
@@ -182,6 +185,7 @@ RSpec.describe Nest::UpdateTransaction, 'postboot lifecycle' do
   end
 
   it 'accepts bound named gates then finalizes ordinary A/B without extra deletion or plan writes' do
+    expect(store.read('cycle')['clone_snapshot']).to eq('nest-reset-cycle')
     expect(accept).to include('schema' => 2, 'accepted' => true, 'finalized' => false)
     before = File.binread(File.join(store.path, 'cycle.json'))
     File.unlink(File.join(store.path, '.lock'))
@@ -189,7 +193,9 @@ RSpec.describe Nest::UpdateTransaction, 'postboot lifecycle' do
     expect(preview).to include('read_only' => true, 'candidates' => [])
     expect(File.exist?(File.join(store.path, '.lock'))).to be(false)
     expect(File.binread(File.join(store.path, 'cycle.json'))).to eq(before)
-    expect(transaction.finalize('cycle', cleanup: 'owned')).to include('state' => 'finalized', 'finalized' => true)
+    expect(transaction.finalize('cycle', cleanup: 'owned')).to include(
+      'state' => 'finalized', 'finalized' => true, 'clone_snapshot' => 'nest-reset-cycle'
+    )
     finalized = File.binread(File.join(store.path, 'cycle.json'))
     expect(transaction.finalize('cycle', cleanup: 'owned')).to include('finalized' => true)
     expect(File.binread(File.join(store.path, 'cycle.json'))).to eq(finalized)
@@ -219,6 +225,8 @@ RSpec.describe Nest::UpdateTransaction, 'postboot lifecycle' do
                                     capacity_policy: TransactionFixture.capacity_policy(@directory))
     end.to raise_error(/fixture stops/)
     expect(store.read('second')['host']['current']).to eq('fixture/ROOT/B')
+    expect(store.read('second')['clone_snapshot']).to eq('nest-reset-second')
+    expect(store.read('cycle')['clone_snapshot']).to eq('nest-reset-cycle')
   end
 
   {

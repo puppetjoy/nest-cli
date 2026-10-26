@@ -42,7 +42,11 @@ module Nest
       Regexp.last_match(1)
     end
 
-    def create(name)
+    def create(name, snapshot: nil)
+      if snapshot && !snapshot.match?(/\Anest-reset-[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}\z/)
+        raise 'Invalid transaction snapshot name'
+      end
+
       if name !~ /^[a-zA-Z0-9][a-zA-Z0-9_:.-]*$/
         logger.error "'#{name}' is not a valid boot environment name"
         return false
@@ -55,7 +59,8 @@ module Nest
 
       logger.info "Creating boot environment '#{name}' from '#{current}'"
 
-      snapshot = "beadm-clone-#{current}-to-#{name}"
+      transaction_owned = !snapshot.nil?
+      snapshot ||= "beadm-clone-#{current}-to-#{name}"
       checked_command(ADMIN + "zfs snapshot -r #{@current_fs}@#{snapshot}").success? or
         raise 'Failed to create snapshots for cloning'
 
@@ -64,10 +69,12 @@ module Nest
         clone_fs = "#{@be_root}/#{name}#{fs.sub(/^#{Regexp.escape(@current_fs)}/, '')}"
         clone_cmd = ADMIN + "zfs clone -o canmount=noauto -o compression=#{compression} " \
                             "-o mountpoint=#{mp.shellescape} #{fs}@#{snapshot} #{clone_fs}"
-        if checked_command(clone_cmd).failure?
-          cmd.run! ADMIN + "zfs destroy -R #{@current_fs}@#{snapshot}"
-          raise 'Failed to clone snapshot. Manual cleanup may be requried.'
-        end
+        next unless checked_command(clone_cmd).failure?
+
+        # Native transactions retain partial creation for observation. A lost
+        # or failed backup receipt must never cause a destructive retry.
+        cmd.run! ADMIN + "zfs destroy -R #{@current_fs}@#{snapshot}" unless transaction_owned
+        raise 'Failed to clone snapshot. Manual cleanup may be required.'
       end
 
       logger.success "Created boot environment '#{name}'"

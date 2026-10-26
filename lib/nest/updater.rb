@@ -77,7 +77,12 @@ module Nest
     def backup
       return false if beadm.list.include?(boot_env) && !beadm.destroy(boot_env)
 
-      beadm.create(boot_env) || $DRY_RUN
+      created = if options[:clone_snapshot]
+                  beadm.create(boot_env, snapshot: options.fetch(:clone_snapshot))
+                else
+                  beadm.create(boot_env)
+                end
+      created || $DRY_RUN
     end
 
     def mount

@@ -164,8 +164,8 @@ module Nest
       end
     end
 
-    def capacity(policy, host, source, stage: 'backup')
-      CapacityAdmission.new(self).call(policy, host, source, stage: stage)
+    def capacity(policy, host, source, stage: 'backup', snapshot: nil)
+      CapacityAdmission.new(self).call(policy, host, source, stage: stage, snapshot: snapshot)
     end
 
     # Enumerate the pool so missing is not confused with a failed targeted read.

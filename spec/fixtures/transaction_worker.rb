@@ -49,7 +49,7 @@ module TransactionFixture
     end
 
     # Native accounting is independently exercised by CapacityAdmission fixtures.
-    def capacity(policy, host, _source, stage: 'backup')
+    def capacity(policy, host, _source, stage: 'backup', snapshot: nil)
       raise 'Fixture accounting changed' if values['capacity_denied']
 
       parts = host.fetch('current').split('/')
@@ -61,6 +61,7 @@ module TransactionFixture
       end
       observations = { 'stage' => stage, 'accounting_contract' => Nest::CapacityAdmission::ACCOUNTING_CONTRACT,
                        'shared_ancestors' => ancestors, 'datasets' => ancestors }
+      observations['clone_snapshot'] = snapshot if snapshot
       { 'admission' => 'admitted', 'admitted' => true, 'observations' => observations,
         'observations_sha256' => Digest::SHA256.hexdigest(JSON.generate(observations)),
         'policy_sha256' => Nest::CapacityPolicy.digest(policy) }
@@ -87,11 +88,13 @@ module TransactionFixture
       @store = store
     end
 
-    def update(phase, _stop, **_options)
+    def update(phase, _stop, **options)
       # Verify the actual on-disk write-ahead receipt before simulating an effect.
       receipt = @store.read('cycle')
       raise 'Side effect without a durable intent' unless receipt.fetch('phases').last.slice('phase', 'state') ==
                                                           { 'phase' => phase.to_s, 'state' => 'started' }
+
+      raise 'Snapshot identity changed at native boundary' unless options[:clone_snapshot] == receipt['clone_snapshot']
 
       File.open(File.join(@directory, 'effects'), 'a') { |file| file.puts(phase) }
       path = File.join(@directory, 'identity')

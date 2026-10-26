@@ -61,11 +61,39 @@ RSpec.describe Nest::UpdateTransaction do
     File.readlines(File.join(@directory, 'effects'), chomp: true)
   end
 
+  it 'plans unique proposed cycles without creating a lock or receipt, with stable explicit IDs' do
+    args = { release: release, root_generation: '/fixture/release',
+             capacity_policy: TransactionFixture.capacity_policy(@directory) }
+    first = transaction.plan(**args)
+    second = transaction.plan(**args)
+    expect(first['clone_snapshot']).not_to eq(second['clone_snapshot'])
+    expect(transaction.plan(**args, id: first['id'])['clone_snapshot']).to eq(first['clone_snapshot'])
+    expect(Dir.children(store.path)).to be_empty
+    expect(first['capacity']['observations']['clone_snapshot']).to eq(first['clone_snapshot'])
+  end
+
+  it 'refuses changing or dropping the persisted snapshot identity on resume' do
+    worker('new', crash: 'sync')
+    data = store.read('cycle')
+    data['clone_snapshot'] = 'nest-reset-other'
+    store.write('cycle', data)
+    expect { transaction.prepare('cycle', release: nil, root_generation: nil, resume: true) }
+      .to raise_error(/snapshot binding/)
+    data.delete('clone_snapshot')
+    store.write('cycle', data)
+    expect { transaction.prepare('cycle', release: nil, root_generation: nil, resume: true) }
+      .to raise_error(/snapshot identity/)
+    expect(effects).to eq(%w[backup mount sync])
+  end
+
   it 'persists each intent before the effect and retains a sanitized report after worker exit' do
     out, err, status = worker('new')
     expect(status.success?).to be(true), err
     report = JSON.parse(out)
     expect(report).to include('state' => 'prepared', 'success' => true, 'reboot_requested' => false)
+    expect(report['clone_snapshot']).to eq('nest-reset-cycle')
+    expect(report['capacity']['checks'].map { |check| check['observations']['clone_snapshot'] }.uniq)
+      .to eq(['nest-reset-cycle'])
     expect(report['phases'].map { |row| row['phase'] }).to eq(described_class::PHASES)
     expect(out).not_to include('SECRET', 'machine_id')
     expect(effects).to eq(described_class::PHASES)
@@ -94,8 +122,10 @@ RSpec.describe Nest::UpdateTransaction do
 
   it 'resumes only the interrupted copy, never backup/mount, and then completes remaining phases' do
     worker('new', crash: 'sync')
+    snapshot = store.read('cycle').fetch('clone_snapshot')
     _out, err, status = worker('resume')
     expect(status.success?).to be(true), err
+    expect(store.read('cycle').fetch('clone_snapshot')).to eq(snapshot)
     expect(effects).to eq(%w[backup mount sync sync kernel unmount activate])
     expect(store.read('cycle')['phases'][2]).to include('attempt' => 2, 'state' => 'complete')
   end
@@ -566,7 +596,7 @@ RSpec.describe Nest::UpdateTransaction do
     native.steps.each_key do |phase|
       next if phase == :kernel
 
-      native.steps[phase] = -> { inert.update(phase, phase) }
+      native.steps[phase] = -> { inert.update(phase, phase, clone_snapshot: native.options[:clone_snapshot]) }
     end
     runner = double('inert native runner')
     allow(native).to receive(:cmd).and_return(runner)

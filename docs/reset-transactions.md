@@ -59,6 +59,35 @@ implicitly approved by preflight success. New preparation requires the bound
 conservative gate documented in [reset-capacity.md](reset-capacity.md), including
 its supported layouts, finite-limit refusals and historical non-replay rules.
 
+## Cycle-owned clone snapshots
+
+New native preparations bind `clone_snapshot: nest-reset-ID` in the existing
+transaction receipt before any backup side effect. The same suffix is used for
+the root and every descendant, for capacity admission before backup, and for
+exact origin/clone admission before promotion. IDs are never recycled, so a
+later cycle does not collide with retained `beadm-clone-B-to-A` snapshots (or
+their descendants). No origin snapshots are renamed or deleted to make room.
+Reports retain this binding through acceptance and finalization.
+
+The read-only transaction preflight returns a proposed `id` and `clone_snapshot`.
+To execute that proposed identity, use its returned `id` with `--transaction`;
+execution always rechecks admission under the host lock. Another plan proposes
+another ID; planning does not reserve it or write a receipt. The Ruby planner
+also accepts `id:` for repeatable observation of a chosen future cycle.
+
+Resume uses the stored suffix, never a freshly generated name. Failed or
+interrupted recursive creation retains that cycle's partial snapshots/clones
+for manual observation and refuses backup replay. It does not recursively
+destroy the partial tree or touch older retained origins. This is not permission
+to abandon the unresolved transaction or start a replacement cycle.
+
+Standalone `beadm create` and nontransactional reset retain their historical
+fixed naming and cleanup behavior. Historical transaction records lacking the
+new binding retain fixed-name admission on preparation resume; existing CLI,
+capacity, identity and ambiguous-boundary guards still apply. Historical
+prepared/accepted reports remain readable and can complete their supported
+acceptance/finalization path without retrofitting or renaming snapshots.
+
 ## Mandatory shared-state provisioning contract for nest/config
 
 Provision BEFORE enabling transactional reset. The CLI provisions nothing and

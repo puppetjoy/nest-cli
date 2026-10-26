@@ -82,14 +82,40 @@ RSpec.describe Nest::CapacityAdmission do
     File.write(ENV.fetch('NEST_CAPACITY_DATA'), JSON.generate(@responses))
   end
 
-  def admit(stage = 'backup')
+  def admit(stage = 'backup', snapshot: nil)
     publish
-    described_class.new(Nest::UpdateObservation.new).call(@policy, @host, @source, stage: stage)
+    described_class.new(Nest::UpdateObservation.new).call(@policy, @host, @source, stage: stage, snapshot: snapshot)
   end
 
   def add_filesystem(name, properties = {})
     @datasets[name] = @datasets.fetch('fixture').merge(properties)
     @guids[name] = (400 + @guids.size).to_s
+  end
+
+  it 'admits a new cycle with retained fixed-name recursive snapshots and no alternate' do
+    ordinary_layout('builder1')
+    @host['current_tree'].each do |row|
+      current = row.fetch('dataset')
+      @datasets.delete(current.sub('/B', '/A'))
+    end
+    @host['alternate_tree'] = []
+    @snapshots = @snapshots.gsub('beadm-clone-A-to-B', 'beadm-clone-B-to-A')
+                           .gsub(%r{fixture/crypt/ROOT/A[^\n]*}, '-')
+    before = @snapshots.dup
+    expect(admit(snapshot: 'nest-reset-next')['admitted']).to be(true)
+    expect(@snapshots).to eq(before)
+    expect { admit }.to raise_error(/Snapshot-name collision/)
+    expect_only_native_reads
+  end
+
+  it 'requires exact cycle origins and clone dependencies before promotion' do
+    @datasets['fixture/ROOT/A']['usedbysnapshots'] = '10'
+    @snapshots = "fixture/ROOT/A@nest-reset-one\t10\tfixture/ROOT/B\n"
+    @datasets['fixture/ROOT/B']['origin'] = 'fixture/ROOT/A@nest-reset-one'
+    expect(admit('activation', snapshot: 'nest-reset-one')['admitted']).to be(true)
+    expect { admit('activation', snapshot: 'nest-reset-two') }.to raise_error(/promotion origin/)
+    expect { admit(snapshot: 'nest-reset-one') }.to raise_error(/Snapshot-name collision/)
+    expect(admit(snapshot: 'nest-reset-two')['admitted']).to be(true)
   end
 
   def add_volume(name)
@@ -489,20 +515,21 @@ RSpec.describe Nest::CapacityAdmission do
     allow(observation).to receive(:target_unmounted!)
     allow(observation).to receive(:copy_target!)
     allow(observation).to receive(:tree) { @host['alternate_tree'] }
-    allow(observation).to receive(:capacity) do |policy, host, source, stage: 'backup'|
+    allow(observation).to receive(:capacity) do |policy, host, source, stage: 'backup', snapshot: nil|
       publish
-      described_class.new(Nest::UpdateObservation.new).call(policy, host, source, stage: stage)
+      described_class.new(Nest::UpdateObservation.new).call(policy, host, source, stage: stage, snapshot: snapshot)
     end
     updater = double('inert updater')
-    allow(updater).to receive(:update) do |phase, _stop, **_options|
+    allow(updater).to receive(:update) do |phase, _stop, **options|
       expect(@store.read('cycle')['phases'].last).to include('phase' => phase.to_s, 'state' => 'started')
       @effects << phase.to_s
       if phase == :backup
         @guids['fixture/ROOT/B'] = '501'
         @host['alternate_tree'] = [{ 'dataset' => 'fixture/ROOT/B', 'guid' => '501' }]
         @datasets['fixture/ROOT/A']['usedbysnapshots'] = '10'
-        @snapshots = "fixture/ROOT/A@beadm-clone-A-to-B\t10\tfixture/ROOT/B\n"
-        @datasets['fixture/ROOT/B']['origin'] = 'fixture/ROOT/A@beadm-clone-A-to-B'
+        snapshot = "fixture/ROOT/A@#{options.fetch(:clone_snapshot)}"
+        @snapshots = "#{snapshot}\t10\tfixture/ROOT/B\n"
+        @datasets['fixture/ROOT/B']['origin'] = snapshot
       end
       @host['next_boot'] = @host['target'] if phase == :activate
       true
