@@ -156,7 +156,12 @@ RSpec.describe Nest::UpdateTransaction, 'postboot lifecycle' do
         data['policy']['cli_sha256'] = 'changed' if mismatch == 'policy'
         data['shared_state']['guid'] = '999' if mismatch == 'shared'
       end
-      expect { transaction.status('cycle') }.to raise_error(StandardError)
+      if %w[source policy].include?(mismatch)
+        observed = transaction.status('cycle').fetch('identity_observation')
+        expect(observed.fetch("#{mismatch}_matches_original")).to be(false)
+      else
+        expect { transaction.status('cycle') }.to raise_error(StandardError)
+      end
       expect { transaction.reboot('cycle', plan: true) }.to raise_error(StandardError)
       expect { transaction.reboot('cycle') }.to raise_error(/already requested/)
     end

@@ -316,6 +316,7 @@ module Nest
       desc 'reset [status|report|reboot|accept|finalize ID] [options]', 'Reset hosts or manage a persisted transaction'
       option :execute, type: :boolean, desc: 'Submit one durable reboot request, for reboot only'
       option :evidence, type: :string, desc: 'Bounded acceptance-evidence JSON file, for accept only'
+      option :postboot_policy, type: :string, desc: 'Explicit retained installed-policy evidence, for accept only'
       option :cleanup, type: :string, desc: 'Explicit owned cleanup policy, for finalize only'
       option :transaction, type: :string, desc: 'Create a durable host preparation transaction'
       option :resume_transaction, type: :string, desc: 'Resume the exact persisted transaction; never repeat backup'
@@ -374,6 +375,7 @@ module Nest
         end
 
         return reset_transaction(action, id) if action || options[:transaction] || options[:resume_transaction]
+        raise '--postboot-policy is only supported for accept' if options[:postboot_policy]
         raise '--execute is only supported for reboot' if options.key?(:execute)
         raise 'Evidence/cleanup require reset accept/finalize ID' if options[:evidence] || options[:cleanup]
         if !options[:plan] && (options[:release] || options[:root_generation] || options[:capacity_policy])
@@ -457,6 +459,9 @@ module Nest
               raise '--plan is only supported for finalize or reboot'
             end
             raise '--evidence is only supported for accept' if options[:evidence] && action != 'accept'
+            if options[:postboot_policy] && action != 'accept'
+              raise '--postboot-policy is only supported for accept'
+            end
             raise '--cleanup is only supported for finalize' if options[:cleanup] && action != 'finalize'
 
             report = case action
@@ -471,12 +476,15 @@ module Nest
                      when 'accept'
                        raise 'Accept requires --evidence FILE' unless options[:evidence]
 
-                       transaction.accept(id, evidence: Nest::AcceptanceEvidence.read(options[:evidence]))
+                       context = Nest::AcceptanceEvidence.read(options[:postboot_policy]) if options[:postboot_policy]
+                       transaction.accept(id, evidence: Nest::AcceptanceEvidence.read(options[:evidence]),
+                                              postboot_policy: context)
                      when 'finalize'
                        transaction.finalize(id, cleanup: options[:cleanup], plan: options[:plan])
                      end
             success = action != 'reboot' || options[:plan] || transaction.reboot_succeeded
           else
+            raise '--postboot-policy is only supported for accept' if options[:postboot_policy]
             raise 'Evidence/cleanup require reset accept/finalize ID' if options[:evidence] || options[:cleanup]
             raise 'Use reset --plan --release DIGEST --root-generation PATH without a transaction ID' if options[:plan]
 
