@@ -5,26 +5,32 @@ require_relative 'acceptance_evidence'
 module Nest
   # Narrow postboot lifecycle under the same host lock as preparation.
   module UpdateLifecycle
-    def accept(id, evidence:)
+    def accept(id, evidence:, postboot_policy: nil)
       @store.lock do
         @record = load_record(id)
         if %w[accepted finalizing finalized].include?(record['state'])
           observed = accepted_host!
           unless record.fetch('acceptance').fetch('evidence') == evidence &&
-                 record['acceptance']['boot_id'] == observed['boot_id']
+                 record['acceptance']['boot_id'] == observed['boot_id'] &&
+                 record['acceptance']['postboot_policy'] == postboot_policy
             raise 'Recorded acceptance differs; never replace its evidence'
           end
 
+          lifecycle_policy!(observed, postboot_policy)
           return report
         end
         raise 'Only a prepared transaction can be accepted' unless record['state'] == 'prepared'
 
         observed = accepted_host!
+        lifecycle_policy!(observed, postboot_policy)
         AcceptanceEvidence.validate!(evidence, record, observed)
         raise 'Host observation changed during acceptance' unless accepted_host! == observed
 
+        lifecycle_policy!(observed, postboot_policy)
+
         record['schema'] = 2 # Explicit schema-1 prepared -> schema-2 accepted transition only.
         record['acceptance'] = { 'recorded_at' => now, 'boot_id' => observed.fetch('boot_id'), 'evidence' => evidence }
+        record['acceptance']['postboot_policy'] = postboot_policy if postboot_policy
         record['owned_candidates'] = [] # Normal native preparation creates no extra BE.
         record['cleanup_receipts'] = []
         record['state'] = 'accepted'
@@ -43,7 +49,13 @@ module Nest
         observed = accepted_host!
         raise 'Acceptance boot changed' unless observed['boot_id'] == record.fetch('acceptance').fetch('boot_id')
 
+        context = record.fetch('acceptance')['postboot_policy']
+        lifecycle_policy!(observed, context)
         candidates = record.fetch('owned_candidates')
+        if context && (!candidates.empty? || !record.fetch('cleanup_receipts').empty?)
+          raise 'Postboot policy evolution permits only non-deleting ordinary finalize'
+        end
+
         candidates.each { |candidate| cleanup_identity!(candidate, observed, plan: plan) }
         if plan
           return report.merge('read_only' => true, 'cleanup' => 'owned', 'candidates' => candidates,
@@ -56,6 +68,8 @@ module Nest
         candidates.each { |candidate| cleanup_candidate(candidate, observed) }
         raise 'Boot selection changed during finalize' unless accepted_host! == observed
 
+        lifecycle_policy!(observed, context)
+
         record['state'] = 'finalized'
         record['finalized_at'] = now
         save
@@ -65,6 +79,48 @@ module Nest
     end
 
     private
+
+    def lifecycle_policy!(observed, context)
+      return reboot_source_policy! unless context
+
+      validate_postboot_policy!(context, record, observed)
+      source = record.fetch('source')
+      raise 'Immutable root generation changed' unless
+        @observation.source(source.fetch('path'), record.fetch('release')) == source
+      raise 'Postboot installed policy changed' unless @observation.policy == context.fetch('current_policy')
+    end
+
+    def validate_postboot_policy!(context, data, host)
+      fields = %w[schema kind transaction_id release observed_boot_id host_identity_sha256 pool_guid
+                  shared_state target_tree source original_policy current_policy evidence_ref evidence_sha256]
+      AcceptanceEvidence.keys!(context, fields)
+      expected = { 'schema' => 1, 'kind' => 'reset_postboot_policy', 'transaction_id' => data.fetch('id'),
+                   'release' => data.fetch('release'), 'observed_boot_id' => host.fetch('boot_id'),
+                   'host_identity_sha256' => Digest::SHA256.hexdigest(data.fetch('host').fetch('machine_id')),
+                   'pool_guid' => data.fetch('host').fetch('pool_guid'), 'shared_state' => data.fetch('shared_state'),
+                   'target_tree' => data.fetch('target_tree'), 'source' => data.fetch('source'),
+                   'original_policy' => data.fetch('policy') }
+      unless expected.all? { |key, value| context[key] == value } &&
+             JSON.generate(context).bytesize <= AcceptanceEvidence::LIMIT
+        raise 'Postboot policy evidence binding mismatch'
+      end
+
+      baseline_boot = data.fetch('host').fetch('boot_id')
+      unless host['boot_id'].is_a?(String) && !host['boot_id'].empty? &&
+             baseline_boot.is_a?(String) && !baseline_boot.empty? && host['boot_id'] != baseline_boot &&
+             data.key?('reboot') && reboot_phases_complete?(data)
+        raise 'Postboot policy requires complete preparation and proven reboot'
+      end
+
+      validate_reboot!(data)
+      policy = context.fetch('current_policy')
+      AcceptanceEvidence.keys!(policy, %w[filter_sha256 cli_sha256])
+      unless policy.values.all? { |value| value.is_a?(String) && AcceptanceEvidence::SHA256.match?(value) }
+        raise 'Invalid postboot policy digest'
+      end
+
+      AcceptanceEvidence.reference!(context)
+    end
 
     def accepted_host!
       observed = bound_host!
@@ -94,9 +150,12 @@ module Nest
       host = data.fetch('host').merge('boot_id' => acceptance.fetch('boot_id'))
       raise 'Acceptance must bind a changed boot' if host['boot_id'] == data['host']['boot_id']
 
-      AcceptanceEvidence.keys!(acceptance, %w[recorded_at boot_id evidence])
+      fields = %w[recorded_at boot_id evidence]
+      fields << 'postboot_policy' if acceptance.key?('postboot_policy')
+      AcceptanceEvidence.keys!(acceptance, fields)
       Time.iso8601(acceptance.fetch('recorded_at'))
       AcceptanceEvidence.validate!(acceptance.fetch('evidence'), data, host)
+      validate_postboot_policy!(acceptance.fetch('postboot_policy'), data, host) if acceptance.key?('postboot_policy')
       # No extra is created by the current preparer. Reserved ownership records must
       # originate in a future source-owned creation phase, never user-supplied names.
       candidates = data.fetch('owned_candidates')

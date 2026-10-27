@@ -73,14 +73,7 @@ module Nest
       observed = bound_host!
       baseline = record.fetch('host')
 
-      if record.key?('reboot')
-        if observed.fetch('boot_id') == baseline.fetch('boot_id')
-          reboot_identity!(historical: true)
-        else
-          accepted_host!
-          reboot_source_policy!
-        end
-      end
+      accepted_host! if record.key?('reboot') && observed.fetch('boot_id') != baseline.fetch('boot_id')
 
       known_current = observed['current'] == baseline['current'] && observed['current_tree'] == baseline['current_tree']
       known_target = observed['current'] == baseline['target'] && observed['current_tree'] == record['target_tree']
@@ -89,7 +82,7 @@ module Nest
         raise 'Observed target BE identity mismatch'
       end
 
-      report.merge('observation' => {
+      report.merge('identity_observation' => identity_observation, 'observation' => {
                      'boot_id' => observed.fetch('boot_id'),
                      'boot_changed' => observed.fetch('boot_id') != baseline.fetch('boot_id'),
                      'current' => observed.fetch('current'), 'next_boot' => observed.fetch('next_boot'),
@@ -139,6 +132,22 @@ module Nest
     end
 
     private
+
+    def identity_observation
+      source = begin
+        @observation.source(record.fetch('source').fetch('path'), record.fetch('release'))
+      rescue StandardError
+        nil # Unknown is observable, never permission to proceed.
+      end
+      policy = begin
+        @observation.policy
+      rescue StandardError
+        nil
+      end
+      { 'source' => source, 'policy' => policy,
+        'source_matches_original' => source && source == record.fetch('source'),
+        'policy_matches_original' => policy && policy == record.fetch('policy') }
+    end
 
     def validate_capacity_policy!(path)
       validate_capacity_record!(record)

@@ -82,7 +82,7 @@ RSpec.describe 'transaction Thor interface' do
 
   it 'routes acceptance evidence through the real Thor parser' do
     expect(Nest::AcceptanceEvidence).to receive(:read).with('/collector.json').and_return('fixture')
-    expect(transaction).to receive(:accept).with('cycle', evidence: 'fixture').and_return(report)
+    expect(transaction).to receive(:accept).with('cycle', evidence: 'fixture', postboot_policy: nil).and_return(report)
     expect do
       Nest::CLI::Main.start(['reset', 'accept', 'cycle', '--evidence=/collector.json', '--format=json'])
     end.to output("#{JSON.generate(report)}\n").to_stdout
@@ -95,6 +95,31 @@ RSpec.describe 'transaction Thor interface' do
       args = ['reset', 'finalize', 'cycle', '--cleanup=owned', '--format=json']
       args << '--plan' if plan
       expect { Nest::CLI::Main.start(args) }.to output("#{JSON.generate(report)}\n").to_stdout
+    end
+  end
+
+  it 'loads explicit postboot policy separately from acceptance evidence' do
+    expect(Nest::AcceptanceEvidence).to receive(:read).with('/context.json').and_return('context')
+    expect(Nest::AcceptanceEvidence).to receive(:read).with('/collector.json').and_return('report')
+    inputs = { evidence: 'report', postboot_policy: 'context' }
+    expect(transaction).to receive(:accept).with('cycle', **inputs).and_return(report)
+    expect do
+      args = %w[reset accept cycle --evidence=/collector.json --postboot-policy=/context.json --format=json]
+      Nest::CLI::Main.start(args)
+    end.to output("#{JSON.generate(report)}\n").to_stdout
+  end
+
+  [%w[status cycle], %w[report cycle], %w[reboot cycle --plan], %w[reboot cycle --execute],
+   %w[finalize cycle --cleanup=owned], %w[--transaction=cycle], %w[--resume-transaction=cycle], []].each do |args|
+    it "rejects postboot policy for #{args.join(' ')}" do
+      expect(transaction).not_to receive(:prepare)
+      expect(transaction).not_to receive(:reboot)
+      expect(transaction).not_to receive(:finalize)
+      expect do
+        expect do
+          Nest::CLI::Main.start(['reset', *args, '--postboot-policy=/context.json', '--format=json'])
+        end.to raise_error(SystemExit) { |error| expect(error.status).to eq(3) }
+      end.to output(/only supported for accept/).to_stdout
     end
   end
 

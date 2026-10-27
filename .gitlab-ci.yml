@@ -13,6 +13,9 @@ verify:
     - bundle install
     - mkdir -p "$HOME/nest-cli-test-tmp" && chmod 700 "$HOME/nest-cli-test-tmp"
     - export TMPDIR="$HOME/nest-cli-test-tmp"
+    # Fail fast on the narrow policy/lifecycle contract before slow native fixtures.
+    - bundle exec rubocop
+    - bundle exec rspec spec/postboot_policy_spec.rb spec/update_lifecycle_spec.rb spec/transaction_cli_spec.rb
     - bundle exec rake
   artifacts:
     when: always
