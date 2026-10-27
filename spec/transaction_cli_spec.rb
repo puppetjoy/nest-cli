@@ -101,8 +101,8 @@ RSpec.describe 'transaction Thor interface' do
   it 'loads explicit postboot policy separately from acceptance evidence' do
     expect(Nest::AcceptanceEvidence).to receive(:read).with('/context.json').and_return('context')
     expect(Nest::AcceptanceEvidence).to receive(:read).with('/collector.json').and_return('report')
-    expect(transaction).to receive(:accept).with('cycle', evidence: 'report',
-                                                       postboot_policy: 'context').and_return(report)
+    inputs = { evidence: 'report', postboot_policy: 'context' }
+    expect(transaction).to receive(:accept).with('cycle', **inputs).and_return(report)
     expect do
       args = %w[reset accept cycle --evidence=/collector.json --postboot-policy=/context.json --format=json]
       Nest::CLI::Main.start(args)

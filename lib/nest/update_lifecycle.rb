@@ -55,6 +55,7 @@ module Nest
         if context && (!candidates.empty? || !record.fetch('cleanup_receipts').empty?)
           raise 'Postboot policy evolution permits only non-deleting ordinary finalize'
         end
+
         candidates.each { |candidate| cleanup_identity!(candidate, observed, plan: plan) }
         if plan
           return report.merge('read_only' => true, 'cleanup' => 'owned', 'candidates' => candidates,
@@ -103,6 +104,7 @@ module Nest
              JSON.generate(context).bytesize <= AcceptanceEvidence::LIMIT
         raise 'Postboot policy evidence binding mismatch'
       end
+
       baseline_boot = data.fetch('host').fetch('boot_id')
       unless host['boot_id'].is_a?(String) && !host['boot_id'].empty? &&
              baseline_boot.is_a?(String) && !baseline_boot.empty? && host['boot_id'] != baseline_boot &&

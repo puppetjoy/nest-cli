@@ -76,8 +76,9 @@ RSpec.describe Nest::UpdateTransaction, 'explicit postboot policy' do
     File.unlink(File.join(store.path, '.lock'))
     result = transaction.status('cycle')
     expect(result['policy']).to eq(@original['policy'])
-    expect(result['identity_observation']).to include('policy' => policy, 'policy_matches_original' => false,
-                                                     'source_matches_original' => true)
+    expect(result['identity_observation']).to include(
+      'policy' => policy, 'policy_matches_original' => false, 'source_matches_original' => true
+    )
     expect(result['accepted']).to be(false)
     expect(File.exist?(File.join(store.path, '.lock'))).to be(false)
     expect(bytes).to eq(before)

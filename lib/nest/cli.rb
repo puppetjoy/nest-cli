@@ -459,9 +459,7 @@ module Nest
               raise '--plan is only supported for finalize or reboot'
             end
             raise '--evidence is only supported for accept' if options[:evidence] && action != 'accept'
-            if options[:postboot_policy] && action != 'accept'
-              raise '--postboot-policy is only supported for accept'
-            end
+            raise '--postboot-policy is only supported for accept' if options[:postboot_policy] && action != 'accept'
             raise '--cleanup is only supported for finalize' if options[:cleanup] && action != 'finalize'
 
             report = case action
