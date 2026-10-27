@@ -63,7 +63,7 @@ module Nest
         reason = record.key?('reboot') ? 'already_requested' : 'eligible'
       else
         accepted_host! # A wrong changed boot is unsafe, not merely ineligible.
-        reboot_source_policy! if record.key?('reboot')
+        reboot_source_policy!
         reason = 'already_booted'
       end
       baseline = record

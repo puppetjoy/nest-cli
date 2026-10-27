@@ -148,6 +148,7 @@ RSpec.describe Nest::UpdateTransaction, 'explicit postboot policy' do
     boot(receipt: false)
     before = bytes
     expect { accept }.to raise_error(/proven reboot/)
+    expect { transaction.reboot('cycle', plan: true) }.to raise_error(/installed CLI changed/)
     expect(bytes).to eq(before)
   end
 
